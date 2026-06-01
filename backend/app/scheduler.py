@@ -189,6 +189,7 @@ class ScanScheduler:
                 self.library_root,
                 1,
                 offset,
+                reindex_library=False,
                 should_stop=self._cancel_scan.is_set,
             )
             repository.finish_limited_scan_batch(self.conn, result)

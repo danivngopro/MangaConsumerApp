@@ -1057,7 +1057,7 @@ function ThreadPanel({
     (worker) => worker.alive,
   );
   const scanThreads = debugThreads.threads.filter((thread) =>
-    /scan|scheduler|import/i.test(thread.name),
+    thread.name !== "scan-scheduler" && /scan|import/i.test(thread.name),
   );
 
   return (
@@ -1072,8 +1072,12 @@ function ThreadPanel({
           value={debugThreads.scanStopRequested ? "Yes" : "No"}
         />
         <DetailStat
-          label="Scheduler scan"
+          label="Scan job"
           value={debugThreads.scheduler.scanRunning ? "Running" : "Idle"}
+        />
+        <DetailStat
+          label="Scheduler service"
+          value={debugThreads.scheduler.thread.alive ? "Alive" : "Stopped"}
         />
         <DetailStat
           label="Top-up"

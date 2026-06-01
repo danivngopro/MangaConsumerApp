@@ -47,9 +47,25 @@ def scan_limited_catalog_batch(
     library_root,
     batch_size: int,
     offset: int = 0,
+    reindex_library: bool = True,
     should_stop: Callable[[], bool] | None = None,
 ) -> dict:
-    local_result = scan_library(conn, library_root)
+    if should_stop and should_stop():
+        return {
+            "seriesScanned": 0,
+            "downloadsQueued": 0,
+            "localBooks": 0,
+            "localChapters": 0,
+            "batchMangaIds": [],
+            "nextOffset": max(0, int(offset)),
+            "catalogTotal": 0,
+            "exhausted": False,
+            "stopped": True,
+        }
+    if reindex_library:
+        local_result = scan_library(conn, library_root)
+    else:
+        local_result = {"books": 0, "chapters": 0, "error": None}
     inventory = repository.get_inventory_map(conn)
     batch_size = max(1, int(batch_size))
     current_offset = max(0, int(offset))
