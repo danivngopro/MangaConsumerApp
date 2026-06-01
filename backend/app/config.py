@@ -43,7 +43,7 @@ def load_settings() -> Settings:
         library_root=Path(
             os.getenv(
                 "MANGA_LIBRARY_ROOT",
-                r"\\192.168.1.139\Ext3TDrive3\komga\books",
+                r"./books",
             )
         ),
         app_data_dir=Path(os.getenv("APP_DATA_DIR", ".manga-recoverer")),

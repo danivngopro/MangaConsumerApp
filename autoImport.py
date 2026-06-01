@@ -3,14 +3,14 @@ import requests
 import unicodedata
 import time
 
-# CONFIGURATION
-KOMGA_URL = "http://localhost:25600"
+# CONFIGURATION — set via environment variables or edit here
+KOMGA_URL = os.getenv("KOMGA_URL", "http://localhost:25600")
 API_LIBRARIES_ENDPOINT = f"{KOMGA_URL}/api/v1/libraries"
-KOMGA_USERNAME = "danivngopro@gmail.com"
-KOMGA_PASSWORD = "123456tt"
+KOMGA_USERNAME = os.getenv("KOMGA_USERNAME", "")
+KOMGA_PASSWORD = os.getenv("KOMGA_PASSWORD", "")
 
-BOOKS_ROOT_HOST = "/media/danivngopro/Ext3TDrive3/komga/books"  # Host path
-BOOKS_ROOT_DOCKER = "/books"  # Path as seen by Komga Docker
+BOOKS_ROOT_HOST = os.getenv("BOOKS_ROOT_HOST", "/books")  # Host path
+BOOKS_ROOT_DOCKER = os.getenv("KOMGA_BOOKS_ROOT_DOCKER", "/books")  # Path as seen by Komga Docker
 
 # AUTH
 session = requests.Session()
