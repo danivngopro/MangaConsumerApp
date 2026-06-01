@@ -1,0 +1,23 @@
+services:
+  manga-recoverer:
+    build: .
+    container_name: manga-recoverer
+    ports:
+      - "8816:8000"
+    environment:
+      APP_DATA_DIR: /data
+      MANGA_LIBRARY_ROOT: /books
+      ASURA_BASE_URL: https://asurascans.com
+      DOWNLOAD_CONCURRENCY: "1"
+      REQUEST_DELAY_SECONDS: "1.0"
+      AUTO_SCAN_EVERY_DAYS: "0"
+      KOMGA_URL: http://host.docker.internal:25600
+      KOMGA_USERNAME: ""
+      KOMGA_PASSWORD: ""
+      KOMGA_BOOKS_ROOT_DOCKER: /books
+    volumes:
+      - ./data:/data
+      - /media/danivngopro/Ext3TDrive3/komga/books:/books
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    restart: unless-stopped

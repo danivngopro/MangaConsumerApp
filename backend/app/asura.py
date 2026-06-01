@@ -1,0 +1,224 @@
+from __future__ import annotations
+
+import html
+import re
+import time
+from dataclasses import dataclass
+from urllib.parse import urljoin, urlparse
+
+import requests
+from bs4 import BeautifulSoup
+
+from .utils import chapter_key, normalize_title, slugify
+
+
+USER_AGENT = (
+    "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
+    "AppleWebKit/537.36 (KHTML, like Gecko) "
+    "Chrome/125.0 Safari/537.36"
+)
+
+
+@dataclass(frozen=True)
+class AsuraSeries:
+    slug: str
+    title: str
+    url: str
+    cover_url: str | None
+    status: str | None
+    remote_chapter_count: int
+
+
+@dataclass(frozen=True)
+class AsuraChapter:
+    number: str
+    label: str
+    url: str
+
+
+class AsuraClient:
+    def __init__(self, base_url: str, request_delay_seconds: float = 1.0) -> None:
+        self.base_url = base_url.rstrip("/")
+        self.request_delay_seconds = request_delay_seconds
+        self.session = requests.Session()
+        self.session.headers.update({"User-Agent": USER_AGENT, "Accept": "text/html,application/xhtml+xml"})
+
+    def _get(self, path_or_url: str) -> str:
+        url = path_or_url if path_or_url.startswith("http") else urljoin(self.base_url, path_or_url)
+        response = self.session.get(url, timeout=45)
+        response.raise_for_status()
+        if self.request_delay_seconds:
+            time.sleep(self.request_delay_seconds)
+        return response.text
+
+    def crawl_catalog(self, max_pages: int = 200, limit: int | None = None) -> list[AsuraSeries]:
+        series: dict[str, AsuraSeries] = {}
+        page = 1
+
+        while page <= max_pages:
+            path = "/browse" if page == 1 else f"/browse?page={page}"
+            text = self._get(path)
+            page_items = self.parse_browse_page(text)
+            for item in page_items:
+                series[item.slug] = item
+                if limit and len(series) >= limit:
+                    return list(series.values())[:limit]
+
+            if not page_items or not self._has_next_page(text, page):
+                break
+            page += 1
+
+        return list(series.values())
+
+    def parse_browse_page(self, text: str) -> list[AsuraSeries]:
+        soup = BeautifulSoup(text, "html.parser")
+        items: list[AsuraSeries] = []
+
+        for card in soup.select(".series-card"):
+            link = card.select_one('a[href^="/comics/"]')
+            title_node = card.select_one("h3")
+            if not link or not title_node:
+                continue
+            title = html.unescape(title_node.get_text(" ", strip=True))
+            url = urljoin(self.base_url, link.get("href", ""))
+            slug = self._slug_from_url(url) or slugify(title)
+            cover = card.select_one("img")
+            chapter_text = card.get_text(" ", strip=True)
+            count_match = re.search(r"(\d+)\s+Chapters", chapter_text, re.IGNORECASE)
+            status_match = re.search(r"\b(ongoing|completed|hiatus|dropped)\b", chapter_text, re.IGNORECASE)
+            items.append(
+                AsuraSeries(
+                    slug=slug,
+                    title=title,
+                    url=url,
+                    cover_url=cover.get("src") if cover else None,
+                    status=status_match.group(1).lower() if status_match else None,
+                    remote_chapter_count=int(count_match.group(1)) if count_match else 0,
+                )
+            )
+
+        if items:
+            return items
+
+        # Fallback for Astro serialized payloads and homepage/latest blocks.
+        seen = set()
+        for match in re.finditer(r"/comics/([a-z0-9-]+(?:-46f09241)?)", text):
+            slug = match.group(1)
+            if slug in seen:
+                continue
+            seen.add(slug)
+            title = self._title_from_slug(slug)
+            items.append(
+                AsuraSeries(
+                    slug=slug,
+                    title=title,
+                    url=urljoin(self.base_url, f"/comics/{slug}"),
+                    cover_url=None,
+                    status=None,
+                    remote_chapter_count=0,
+                )
+            )
+        return items
+
+    def fetch_series(self, series_url: str) -> tuple[AsuraSeries, list[AsuraChapter]]:
+        text = self._get(series_url)
+        soup = BeautifulSoup(text, "html.parser")
+        canonical = soup.select_one('link[rel="canonical"]')
+        url = canonical.get("href") if canonical else series_url
+        title_node = soup.select_one('meta[property="og:title"]')
+        title = (title_node.get("content", "").replace("| Asura Scans", "").strip() if title_node else "")
+        if not title:
+            title = soup.select_one("h1").get_text(" ", strip=True) if soup.select_one("h1") else self._title_from_slug(url)
+
+        cover_node = soup.select_one('meta[property="og:image"]')
+        episode_match = re.search(r'"numberOfEpisodes"\s*:\s*(\d+)', text)
+        status_match = re.search(r"\b(ongoing|completed|hiatus|dropped)\b", soup.get_text(" ", strip=True), re.IGNORECASE)
+        series = AsuraSeries(
+            slug=self._slug_from_url(url) or slugify(title),
+            title=html.unescape(title),
+            url=url,
+            cover_url=cover_node.get("content") if cover_node else None,
+            status=status_match.group(1).lower() if status_match else None,
+            remote_chapter_count=int(episode_match.group(1)) if episode_match else 0,
+        )
+        chapters = self.parse_chapters(text, url)
+        if chapters and not series.remote_chapter_count:
+            series = AsuraSeries(
+                slug=series.slug,
+                title=series.title,
+                url=series.url,
+                cover_url=series.cover_url,
+                status=series.status,
+                remote_chapter_count=len(chapters),
+            )
+        return series, chapters
+
+    def parse_chapters(self, text: str, series_url: str) -> list[AsuraChapter]:
+        found: dict[str, AsuraChapter] = {}
+        soup = BeautifulSoup(text, "html.parser")
+
+        for link in soup.select('a[href*="/chapter/"]'):
+            href = link.get("href", "")
+            number = self._chapter_number_from_url(href)
+            key = chapter_key(number)
+            if not key:
+                continue
+            label = link.get_text(" ", strip=True) or f"Chapter {key}"
+            if not re.search(r"\bchapter\s*\d", label, re.IGNORECASE):
+                continue
+            found[key] = AsuraChapter(number=key, label=html.unescape(label), url=urljoin(self.base_url, href))
+
+        if not found:
+            for match in re.finditer(r'(/comics/[^"\s<>]+/chapter/(\d+(?:\.\d+)?))', text):
+                key = chapter_key(match.group(2))
+                if key and key not in found:
+                    found[key] = AsuraChapter(
+                        number=key,
+                        label=f"Chapter {key}",
+                        url=urljoin(self.base_url, html.unescape(match.group(1))),
+                    )
+
+        if not found:
+            count_match = re.search(r'"numberOfEpisodes"\s*:\s*(\d+)', text)
+            if count_match:
+                count = int(count_match.group(1))
+                base = series_url.rstrip("/")
+                for number in range(1, count + 1):
+                    key = str(number)
+                    found[key] = AsuraChapter(
+                        number=key,
+                        label=f"Chapter {key}",
+                        url=f"{base}/chapter/{key}",
+                    )
+
+        return sorted(found.values(), key=lambda chapter: float(chapter.number))
+
+    def find_series(self, query: str) -> AsuraSeries | None:
+        if query.startswith("http"):
+            series, _ = self.fetch_series(query)
+            return series
+
+        wanted = normalize_title(query)
+        for series in self.crawl_catalog():
+            normalized = normalize_title(series.title)
+            if normalized == wanted or wanted in normalized or normalized in wanted:
+                return series
+        return None
+
+    def _has_next_page(self, text: str, page: int) -> bool:
+        return f'/browse?page={page + 1}' in text or f"/browse?page={page + 1}" in text
+
+    def _slug_from_url(self, value: str) -> str:
+        path = urlparse(value).path.strip("/")
+        if path.startswith("comics/"):
+            return path.split("/")[1]
+        return ""
+
+    def _chapter_number_from_url(self, value: str) -> str:
+        match = re.search(r"/chapter/(\d+(?:\.\d+)?)", value)
+        return match.group(1) if match else ""
+
+    def _title_from_slug(self, value: str) -> str:
+        slug = self._slug_from_url(value) or value
+        slug = re.sub(r"-46f09241$", "", slug)
+        return " ".join(part.capitalize() for part in slug.split("-"))
