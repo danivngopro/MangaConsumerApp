@@ -275,7 +275,7 @@ export function App() {
     <main className="app-shell">
       <header className="topbar">
         <div className="brand-block">
-          <img className="site-mark" src="/site-icon2.png" alt="" />
+          <img className="site-mark" src="../public/site-icon2.png" alt="" />
           <div>
             <h1>Manga Crawler</h1>
             <p>{summary.libraryRoot || "Backend not connected"}</p>
@@ -1264,7 +1264,7 @@ function AuthScreen({
   return (
     <main className="auth-shell">
       <form className="auth-panel" onSubmit={submit}>
-        <img className="auth-logo" src="/site-icon2.png" alt="" />
+        <img className="auth-logo" src="../public/site-icon2.png" alt="" />
         <div className="auth-icon">
           <Lock size={22} />
         </div>
