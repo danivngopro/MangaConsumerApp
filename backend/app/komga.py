@@ -77,6 +77,10 @@ class KomgaClient:
         self.quick_scan_library(str(library["id"]))
         return library
 
+    def import_book(self, book_title: str) -> dict:
+        library, _created = self.ensure_library_for_book(book_title)
+        return library
+
     def quick_scan_all(self) -> int:
         libraries = self.list_libraries()
         for library in libraries:

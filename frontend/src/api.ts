@@ -30,6 +30,8 @@ export type Book = {
 
 export type BookDetail = Book & {
   downloaded_count: number;
+  existing_downloaded_count: number;
+  newly_downloaded_count: number;
   paused_downloads: boolean;
   komga_library_id: string | null;
   komga_imported_at: string | null;
@@ -42,6 +44,7 @@ export type BookDetail = Book & {
     is_downloaded: number;
     file_path: string | null;
   }>;
+  local_chapters: string[];
   jobs: Job[];
 };
 
@@ -61,10 +64,20 @@ export type Job = {
 export type DownloadProgress = {
   manga_id: number;
   manga_title: string;
+  url: string;
+  local_folder: string | null;
   total: number;
   done: number;
+  available_count: number;
+  existing_downloaded_count: number;
+  newly_downloaded_count: number;
+  remote_chapter_count: number;
+  missing_count: number;
+  job_total: number;
+  job_done: number;
   running: number;
   queued: number;
+  paused: number;
   failed: number;
   percent: number;
 };
@@ -155,6 +168,12 @@ export const api = {
       title: string;
       deep: boolean;
     }>(`/api/komga/books/${mangaId}/quick-scan`, { method: "POST" }),
+  importBook: (mangaId: number) =>
+    request<{
+      imported: boolean;
+      libraryId: string;
+      title: string;
+    }>(`/api/komga/books/${mangaId}/import`, { method: "POST" }),
   quickScanAll: () =>
     request<{ scanned: boolean; libraryCount: number; deep: boolean }>(
       "/api/komga/quick-scan-all",

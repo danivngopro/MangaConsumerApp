@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import re
 import unicodedata
+import html
 from datetime import datetime, timezone
 
 
@@ -18,6 +19,18 @@ def normalize_title(value: str) -> str:
     value = value.lower()
     value = re.sub(r"[^a-z0-9]+", " ", value)
     return re.sub(r"\s+", " ", value).strip()
+
+
+def fix_mojibake(value: str | None) -> str:
+    if value is None:
+        return ""
+    cleaned = html.unescape(value)
+    if any(marker in cleaned for marker in ("â", "Ã", "ð")):
+        try:
+            cleaned = cleaned.encode("latin1").decode("utf-8")
+        except UnicodeError:
+            pass
+    return cleaned
 
 
 def slugify(value: str) -> str:

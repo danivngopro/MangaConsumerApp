@@ -9,7 +9,7 @@ from urllib.parse import urljoin, urlparse
 import requests
 from bs4 import BeautifulSoup
 
-from .utils import chapter_key, normalize_title, slugify
+from .utils import chapter_key, fix_mojibake, normalize_title, slugify
 
 
 USER_AGENT = (
@@ -79,7 +79,7 @@ class AsuraClient:
             title_node = card.select_one("h3")
             if not link or not title_node:
                 continue
-            title = html.unescape(title_node.get_text(" ", strip=True))
+            title = fix_mojibake(title_node.get_text(" ", strip=True))
             url = urljoin(self.base_url, link.get("href", ""))
             slug = self._slug_from_url(url) or slugify(title)
             cover = card.select_one("img")
@@ -135,7 +135,7 @@ class AsuraClient:
         status_match = re.search(r"\b(ongoing|completed|hiatus|dropped)\b", soup.get_text(" ", strip=True), re.IGNORECASE)
         series = AsuraSeries(
             slug=self._slug_from_url(url) or slugify(title),
-            title=html.unescape(title),
+            title=fix_mojibake(title),
             url=url,
             cover_url=cover_node.get("content") if cover_node else None,
             status=status_match.group(1).lower() if status_match else None,
@@ -166,7 +166,7 @@ class AsuraClient:
             label = link.get_text(" ", strip=True) or f"Chapter {key}"
             if not re.search(r"\bchapter\s*\d", label, re.IGNORECASE):
                 continue
-            found[key] = AsuraChapter(number=key, label=html.unescape(label), url=urljoin(self.base_url, href))
+            found[key] = AsuraChapter(number=key, label=fix_mojibake(label), url=urljoin(self.base_url, href))
 
         if not found:
             for match in re.finditer(r'(/comics/[^"\s<>]+/chapter/(\d+(?:\.\d+)?))', text):

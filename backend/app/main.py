@@ -287,6 +287,22 @@ def quick_scan_book(manga_id: int, _user: dict = Depends(authenticated_user)) ->
         raise HTTPException(status_code=502, detail=str(exc)) from exc
 
 
+@app.post("/api/komga/books/{manga_id}/import")
+def import_book_to_komga(manga_id: int, _user: dict = Depends(authenticated_user)) -> dict:
+    row = conn.execute("SELECT title FROM manga WHERE id = ?", (manga_id,)).fetchone()
+    if row is None:
+        raise HTTPException(status_code=404, detail="manga not found")
+    try:
+        library = komga_client.import_book(row["title"])
+        repository.update_komga_status(conn, manga_id, str(library["id"]), True, False, None)
+        repository.log(conn, "info", f"Manual Komga import for {row['title']}")
+        return {"imported": True, "libraryId": library["id"], "title": row["title"]}
+    except Exception as exc:
+        repository.update_komga_status(conn, manga_id, None, False, False, str(exc))
+        repository.log(conn, "error", f"Manual Komga import failed for {row['title']}: {exc}")
+        raise HTTPException(status_code=502, detail=str(exc)) from exc
+
+
 @app.post("/api/komga/quick-scan-all")
 def quick_scan_all_books(_user: dict = Depends(authenticated_user)) -> dict:
     try:

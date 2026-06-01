@@ -5,13 +5,21 @@ import sqlite3
 import threading
 from typing import Iterable
 
-from .utils import chapter_key, normalize_title, utc_now
+from .utils import chapter_key, fix_mojibake, normalize_title, utc_now
 
 DB_LOCK = threading.RLock()
 
 
 def row_to_dict(row: sqlite3.Row | None) -> dict | None:
     return dict(row) if row is not None else None
+
+
+def clean_row(row: sqlite3.Row | dict) -> dict:
+    item = dict(row)
+    for key in ("title", "manga_title", "label", "chapter_label"):
+        if item.get(key):
+            item[key] = fix_mojibake(item[key])
+    return item
 
 
 def log(conn: sqlite3.Connection, level: str, message: str) -> None:
@@ -87,7 +95,8 @@ def get_inventory_map(conn: sqlite3.Connection) -> dict[str, dict]:
 
 def upsert_manga(conn: sqlite3.Connection, manga: dict) -> int:
     now = utc_now()
-    normalized = normalize_title(manga["title"])
+    title = fix_mojibake(manga["title"])
+    normalized = normalize_title(title)
     conn.execute(
         """
         INSERT INTO manga(
@@ -105,7 +114,7 @@ def upsert_manga(conn: sqlite3.Connection, manga: dict) -> int:
         """,
         (
             manga["slug"],
-            manga["title"],
+            title,
             normalized,
             manga["url"],
             manga.get("cover_url"),
@@ -390,7 +399,7 @@ def update_komga_status(
 
 def list_manga(conn: sqlite3.Connection) -> list[dict]:
     return [
-        dict(row)
+        clean_row(row)
         for row in conn.execute(
             """
             SELECT * FROM manga
@@ -401,11 +410,12 @@ def list_manga(conn: sqlite3.Connection) -> list[dict]:
 
 
 def get_manga_detail(conn: sqlite3.Connection, manga_id: int) -> dict | None:
-    manga = row_to_dict(conn.execute("SELECT * FROM manga WHERE id = ?", (manga_id,)).fetchone())
+    manga_row = conn.execute("SELECT * FROM manga WHERE id = ?", (manga_id,)).fetchone()
+    manga = clean_row(manga_row) if manga_row else None
     if manga is None:
         return None
     chapters = [
-        dict(row)
+        clean_row(row)
         for row in conn.execute(
             """
             SELECT * FROM chapters
@@ -416,7 +426,7 @@ def get_manga_detail(conn: sqlite3.Connection, manga_id: int) -> dict | None:
         ).fetchall()
     ]
     jobs = [
-        dict(row)
+        clean_row(row)
         for row in conn.execute(
             """
             SELECT j.*, c.label AS chapter_label
@@ -433,16 +443,27 @@ def get_manga_detail(conn: sqlite3.Connection, manga_id: int) -> dict | None:
         "SELECT COUNT(*) AS count FROM chapters WHERE manga_id = ? AND is_downloaded = 1",
         (manga_id,),
     ).fetchone()["count"]
+    inventory = conn.execute(
+        "SELECT chapters_json FROM local_inventory WHERE normalized_title = ?",
+        (manga["normalized_title"],),
+    ).fetchone()
+    local_chapters = json.loads(inventory["chapters_json"] or "[]") if inventory else []
+    existing_count = int(manga["local_chapter_count"] or 0)
+    remote_count = int(manga["remote_chapter_count"] or len(chapters) or 0)
+    available_count = min(remote_count, existing_count + int(downloaded_count)) if remote_count else existing_count + int(downloaded_count)
     manga["chapters"] = chapters
+    manga["local_chapters"] = local_chapters
     manga["jobs"] = jobs
-    manga["downloaded_count"] = downloaded_count
+    manga["downloaded_count"] = available_count
+    manga["existing_downloaded_count"] = existing_count
+    manga["newly_downloaded_count"] = int(downloaded_count)
     manga["paused_downloads"] = manga_has_paused_jobs(conn, manga_id)
     return manga
 
 
 def list_jobs(conn: sqlite3.Connection, limit: int = 100) -> list[dict]:
     return [
-        dict(row)
+        clean_row(row)
         for row in conn.execute(
             """
             SELECT
@@ -466,30 +487,52 @@ def download_progress(conn: sqlite3.Connection) -> list[dict]:
         SELECT
             m.id AS manga_id,
             m.title AS manga_title,
-            SUM(CASE WHEN j.status IN ('queued', 'running', 'done', 'failed') THEN 1 ELSE 0 END) AS total,
-            SUM(CASE WHEN j.status = 'done' THEN 1 ELSE 0 END) AS done,
+            m.url,
+            m.local_folder,
+            m.local_chapter_count AS existing_downloaded_count,
+            m.remote_chapter_count,
+            m.missing_count,
+            COALESCE(ch.downloaded_count, 0) AS newly_downloaded_count,
+            SUM(CASE WHEN j.status IN ('queued', 'running', 'done', 'failed', 'paused') THEN 1 ELSE 0 END) AS job_total,
+            SUM(CASE WHEN j.status = 'done' THEN 1 ELSE 0 END) AS job_done,
             SUM(CASE WHEN j.status = 'running' THEN 1 ELSE 0 END) AS running,
             SUM(CASE WHEN j.status = 'queued' THEN 1 ELSE 0 END) AS queued,
+            SUM(CASE WHEN j.status = 'paused' THEN 1 ELSE 0 END) AS paused,
             SUM(CASE WHEN j.status = 'failed' THEN 1 ELSE 0 END) AS failed,
             MAX(j.finished_at) AS last_finished_at,
             MAX(j.started_at) AS last_started_at
-        FROM jobs j
-        JOIN manga m ON m.id = j.manga_id
-        WHERE j.type = 'download'
+        FROM manga m
+        LEFT JOIN jobs j ON j.manga_id = m.id AND j.type = 'download'
+        LEFT JOIN (
+            SELECT manga_id, COUNT(*) AS downloaded_count
+            FROM chapters
+            WHERE is_downloaded = 1
+            GROUP BY manga_id
+        ) ch ON ch.manga_id = m.id
         GROUP BY m.id, m.title
-        HAVING total > 0
+        HAVING job_total > 0 OR m.local_chapter_count > 0 OR COALESCE(ch.downloaded_count, 0) > 0 OR m.missing_count > 0
         ORDER BY
             CASE WHEN running > 0 THEN 0 WHEN queued > 0 THEN 1 ELSE 2 END,
-            MAX(j.id) DESC
-        LIMIT 40
+            m.missing_count DESC,
+            m.title COLLATE NOCASE
+        LIMIT 250
         """
     ).fetchall()
     progress = []
     for row in rows:
-        item = dict(row)
-        total = int(item["total"] or 0)
-        done = int(item["done"] or 0)
-        item["percent"] = round((done / total) * 100, 1) if total else 0
+        item = clean_row(row)
+        existing = int(item["existing_downloaded_count"] or 0)
+        newly = int(item["newly_downloaded_count"] or 0)
+        job_total = int(item["job_total"] or 0)
+        remote = int(item["remote_chapter_count"] or 0)
+        total = remote or max(existing + newly + job_total, 0)
+        available = min(total, existing + newly) if total else existing + newly
+        item["total"] = total
+        item["done"] = available
+        item["available_count"] = available
+        item["job_total"] = job_total
+        item["job_done"] = int(item["job_done"] or 0)
+        item["percent"] = round((available / total) * 100, 1) if total else 0
         progress.append(item)
     return progress
 

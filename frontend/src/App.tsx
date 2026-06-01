@@ -1,19 +1,23 @@
-import { FormEvent, useEffect, useMemo, useState } from "react";
+import { FormEvent, useEffect, useState } from "react";
 import {
   Activity,
   BookOpen,
+  ChevronDown,
   Clock,
   Download,
+  Info,
+  Lock,
   Pause,
   Play,
   RefreshCw,
-  Info,
   Search,
   Server,
-  Lock,
   Settings,
+  UploadCloud,
+  X,
+  Zap,
 } from "lucide-react";
-import { api, AuthStatus, Book, BookDetail, DownloadProgress, Job, Summary } from "./api";
+import { api, AuthStatus, BookDetail, DownloadProgress, Summary } from "./api";
 
 const emptySummary: Summary = {
   knownManga: 0,
@@ -35,10 +39,9 @@ const emptySummary: Summary = {
 export function App() {
   const [authStatus, setAuthStatus] = useState<AuthStatus | null>(null);
   const [summary, setSummary] = useState<Summary>(emptySummary);
-  const [books, setBooks] = useState<Book[]>([]);
-  const [jobs, setJobs] = useState<Job[]>([]);
   const [progress, setProgress] = useState<DownloadProgress[]>([]);
-  const [selectedBook, setSelectedBook] = useState<BookDetail | null>(null);
+  const [details, setDetails] = useState<Record<number, BookDetail>>({});
+  const [expandedBookId, setExpandedBookId] = useState<number | null>(null);
   const [query, setQuery] = useState("");
   const [scanLimit, setScanLimit] = useState(10);
   const [intervalDays, setIntervalDays] = useState(0);
@@ -52,18 +55,15 @@ export function App() {
     if (!nextAuthStatus.authenticated) {
       return;
     }
-    const [nextSummary, nextBooks, nextJobs, nextProgress] = await Promise.all([
-      api.summary(),
-      api.books(),
-      api.jobs(),
-      api.progress(),
-    ]);
+    const [nextSummary, nextProgress] = await Promise.all([api.summary(), api.progress()]);
     setSummary(nextSummary);
-    setBooks(nextBooks);
-    setJobs(nextJobs);
     setProgress(nextProgress);
     setIntervalDays(nextSummary.autoScanEveryDays);
     setDownloadConcurrency(nextSummary.downloadConcurrency);
+    if (expandedBookId) {
+      const detail = await api.bookDetail(expandedBookId);
+      setDetails((current) => ({ ...current, [expandedBookId]: detail }));
+    }
   }
 
   useEffect(() => {
@@ -72,12 +72,7 @@ export function App() {
       refresh().catch((error) => setStatus(error.message));
     }, 5000);
     return () => window.clearInterval(handle);
-  }, []);
-
-  const activeJobs = useMemo(
-    () => jobs.filter((job) => job.status === "running" || job.status === "queued").slice(0, 8),
-    [jobs],
-  );
+  }, [expandedBookId]);
 
   async function runAction(label: string, action: () => Promise<unknown>) {
     setLoading(true);
@@ -113,23 +108,36 @@ export function App() {
     await runAction("Komga quick scan all", api.quickScanAll);
   }
 
-  async function openBook(bookId: number) {
-    try {
-      setSelectedBook(await api.bookDetail(bookId));
-    } catch (error) {
-      setStatus(error instanceof Error ? error.message : String(error));
+  async function toggleBook(bookId: number) {
+    if (expandedBookId === bookId) {
+      setExpandedBookId(null);
+      return;
+    }
+    setExpandedBookId(bookId);
+    if (!details[bookId]) {
+      setDetails((current) => ({ ...current }));
+      try {
+        const detail = await api.bookDetail(bookId);
+        setDetails((current) => ({ ...current, [bookId]: detail }));
+      } catch (error) {
+        setStatus(error instanceof Error ? error.message : String(error));
+      }
     }
   }
 
-  async function pauseOrResumeBook(book: Book) {
-    const detail = selectedBook?.id === book.id ? selectedBook : await api.bookDetail(book.id);
-    if (detail.paused_downloads) {
-      await runAction(`Resume downloads: ${book.title}`, () => api.resumeBookDownloads(book.id));
+  async function refreshBook(bookId: number) {
+    const detail = await api.bookDetail(bookId);
+    setDetails((current) => ({ ...current, [bookId]: detail }));
+  }
+
+  async function pauseOrResumeBook(item: DownloadProgress, detail?: BookDetail) {
+    if (detail?.paused_downloads || item.paused > 0) {
+      await runAction(`Resume downloads: ${item.manga_title}`, () => api.resumeBookDownloads(item.manga_id));
     } else {
-      await runAction(`Pause downloads: ${book.title}`, () => api.pauseBookDownloads(book.id));
+      await runAction(`Pause downloads: ${item.manga_title}`, () => api.pauseBookDownloads(item.manga_id));
     }
-    if (selectedBook?.id === book.id) {
-      setSelectedBook(await api.bookDetail(book.id));
+    if (expandedBookId === item.manga_id) {
+      await refreshBook(item.manga_id);
     }
   }
 
@@ -144,13 +152,16 @@ export function App() {
   return (
     <main className="app-shell">
       <header className="topbar">
-        <div>
-          <h1>Asura Komga Manager</h1>
-          <p>{summary.libraryRoot || "Backend not connected"}</p>
-          <p>Logged in as {authStatus.username}</p>
+        <div className="brand-block">
+          <img className="site-mark" src="/site-icon.png" alt="" />
+          <div>
+            <h1>Asura Komga Manager</h1>
+            <p>{summary.libraryRoot || "Backend not connected"}</p>
+            <p>Logged in as {authStatus.username}</p>
+          </div>
         </div>
         <div className="topbar-actions">
-          <button className="secondary" onClick={() => refresh()} disabled={loading} title="Refresh">
+          <button className="secondary" onClick={() => refresh()} disabled={loading} title="Refresh dashboard data now.">
             <RefreshCw size={17} />
             Refresh
           </button>
@@ -158,10 +169,10 @@ export function App() {
             className={summary.queuePaused ? "primary" : "secondary"}
             onClick={() => runAction(summary.queuePaused ? "Queue resume" : "Queue pause", summary.queuePaused ? api.resumeQueue : api.pauseQueue)}
             disabled={loading}
-            title={summary.queuePaused ? "Resume all queued downloads" : "Pause all queued downloads after current running chapters finish"}
+            title={summary.queuePaused ? "Resume all queued downloads." : "Pause all queued downloads after current running chapters finish."}
           >
             {summary.queuePaused ? <Play size={17} /> : <Pause size={17} />}
-            {summary.queuePaused ? "Resume all downloads" : "Pause all downloads"}
+            {summary.queuePaused ? "Resume all" : "Pause all"}
           </button>
           <button
             className="secondary"
@@ -205,15 +216,15 @@ export function App() {
               className="primary"
               onClick={() => runAction("Full scan", () => api.fullScan(null))}
               disabled={loading}
-              title="Scan every Asura catalog page, compare against your Komga books folder, and enqueue every missing chapter. This can queue a lot."
+              title="Scan the full Asura catalog, compare against your Komga books folder, and enqueue missing chapters."
             >
               Full scan
             </button>
             <button
               className="secondary"
-              onClick={() => runAction("Library scan", api.libraryScan)}
+              onClick={() => runAction("Library reindex", api.libraryScan)}
               disabled={loading}
-              title="Re-read the local Komga books folder and count existing CBZ chapters. This does not call Komga and does not download."
+              title="Re-read the local Komga books folder and count existing CBZ chapters. This does not call Komga."
             >
               Reindex library
             </button>
@@ -221,7 +232,7 @@ export function App() {
               className="secondary"
               onClick={confirmAllKomgaScan}
               disabled={loading}
-              title="Ask Komga to quick scan every existing Komga library with deep=false. This can be heavy, so confirmation is required."
+              title="Ask Komga to quick scan every existing Komga library with deep=false. Confirmation is required."
             >
               Komga scan all
             </button>
@@ -253,7 +264,7 @@ export function App() {
               onChange={(event) => setQuery(event.target.value)}
               placeholder="Manga title or Asura URL"
             />
-            <button className="secondary" disabled={loading || !query.trim()}>
+            <button className="secondary" disabled={loading || !query.trim()} title="Find one Asura manga, compare it against local files, and enqueue missing chapters.">
               Scan manga
             </button>
           </form>
@@ -290,7 +301,7 @@ export function App() {
             <button className="secondary" disabled={loading}>Save</button>
           </form>
           <p className="muted">
-            Auto scan 0 disables scheduling. Concurrent downloads controls parallel chapter download workers. Keep it low; 1-3 is usually enough. Last scan: {summary.lastScanAt ? new Date(summary.lastScanAt).toLocaleString() : "never"}
+            Auto scan 0 disables scheduling. Concurrent downloads controls parallel chapter workers. Last scan: {summary.lastScanAt ? new Date(summary.lastScanAt).toLocaleString() : "never"}
           </p>
         </div>
       </section>
@@ -298,170 +309,149 @@ export function App() {
       <section className="panel progress-panel">
         <div className="panel-title">
           <Info size={18} />
-          Download Progress
+          Books and Download Progress
         </div>
         {progress.length ? (
           <div className="progress-list">
-            {progress.map((item) => <ProgressRow key={item.manga_id} item={item} />)}
+            {progress.map((item) => (
+              <ProgressRow
+                key={item.manga_id}
+                item={item}
+                detail={details[item.manga_id]}
+                expanded={expandedBookId === item.manga_id}
+                loading={loading}
+                onToggle={() => toggleBook(item.manga_id)}
+                onRefresh={() => runAction(`Refresh: ${item.manga_title}`, () => refreshBook(item.manga_id))}
+                onClose={() => setExpandedBookId(null)}
+                onPause={() => pauseOrResumeBook(item, details[item.manga_id])}
+                onQuickScan={() => runAction(`Fast Komga scan: ${item.manga_title}`, () => api.quickScanBook(item.manga_id))}
+                onImport={() => runAction(`Komga import: ${item.manga_title}`, () => api.importBook(item.manga_id))}
+                onSpecificScan={() => runAction(`Quick scan: ${item.manga_title}`, () => api.specificScan(item.url || item.manga_title))}
+              />
+            ))}
           </div>
         ) : (
-          <p className="empty">No download progress yet.</p>
+          <p className="empty">No tracked books yet. Run a scan to populate progress.</p>
         )}
       </section>
-
-      <section className="content-grid">
-        <div className="panel books-panel">
-          <div className="panel-title">
-            <BookOpen size={18} />
-            Downloaded and Tracked Books
-          </div>
-          <div className="table-wrap">
-            <table>
-              <thead>
-                <tr>
-                  <th>Title</th>
-                  <th>Status</th>
-                  <th>Local</th>
-                  <th>Asura</th>
-                  <th>Missing</th>
-                  <th>Last scan</th>
-                  <th>Downloads</th>
-                  <th>Komga</th>
-                </tr>
-              </thead>
-              <tbody>
-                {books.map((book) => (
-                  <tr key={book.id}>
-                    <td>
-                      <a href={book.url} target="_blank" rel="noreferrer">{book.title}</a>
-                      <span>{book.local_folder ?? "Not in local library yet"}</span>
-                    </td>
-                    <td>{book.status ?? "unknown"}</td>
-                    <td>{book.local_chapter_count}</td>
-                    <td>{book.remote_chapter_count}</td>
-                    <td className={book.missing_count > 0 ? "missing" : ""}>{book.missing_count}</td>
-                    <td>{book.last_scanned_at ? new Date(book.last_scanned_at).toLocaleString() : "never"}</td>
-                    <td>
-                      <div className="book-actions">
-                        <button
-                          className="mini-button"
-                          onClick={() => openBook(book.id)}
-                          disabled={loading}
-                        >
-                          Details
-                        </button>
-                        <button
-                          className="mini-button"
-                          onClick={() => pauseOrResumeBook(book)}
-                          disabled={loading}
-                        >
-                          Pause
-                        </button>
-                      </div>
-                    </td>
-                    <td>
-                      <button
-                        className="mini-button"
-                        onClick={() => runAction(`Komga quick scan: ${book.title}`, () => api.quickScanBook(book.id))}
-                        disabled={loading}
-                      >
-                        Quick scan
-                      </button>
-                    </td>
-                  </tr>
-                ))}
-                {!books.length && (
-                  <tr>
-                    <td colSpan={8} className="empty">Run a full scan to populate tracked books.</td>
-                  </tr>
-                )}
-              </tbody>
-            </table>
-          </div>
-        </div>
-
-        <div className="panel jobs-panel">
-          <div className="panel-title">
-            <Activity size={18} />
-            Queue
-          </div>
-          <div className="job-list">
-            {activeJobs.map((job) => <JobRow key={job.id} job={job} />)}
-            {!activeJobs.length && <p className="empty">No active jobs.</p>}
-          </div>
-          <div className="recent">
-            <h2>Recent</h2>
-            {jobs.slice(0, 12).map((job) => <JobRow key={`recent-${job.id}`} job={job} compact />)}
-          </div>
-        </div>
-      </section>
-      {selectedBook && (
-        <BookDetailPanel
-          book={selectedBook}
-          onClose={() => setSelectedBook(null)}
-          onRefresh={() => openBook(selectedBook.id)}
-        />
-      )}
     </main>
   );
 }
 
-function ProgressRow({ item }: { item: DownloadProgress }) {
+function ProgressRow({
+  item,
+  detail,
+  expanded,
+  loading,
+  onToggle,
+  onRefresh,
+  onClose,
+  onPause,
+  onQuickScan,
+  onImport,
+  onSpecificScan,
+}: {
+  item: DownloadProgress;
+  detail?: BookDetail;
+  expanded: boolean;
+  loading: boolean;
+  onToggle: () => void;
+  onRefresh: () => void;
+  onClose: () => void;
+  onPause: () => void;
+  onQuickScan: () => void;
+  onImport: () => void;
+  onSpecificScan: () => void;
+}) {
+  const paused = Boolean(detail?.paused_downloads || item.paused > 0);
+  const localChapters = detail?.local_chapters ?? [];
+  const newlyDownloaded = detail?.chapters.filter((chapter) => chapter.is_downloaded && chapter.file_path) ?? [];
+  const episodeTotal = item.remote_chapter_count || item.total || detail?.chapters.length || 0;
+  const downloaded = detail?.downloaded_count ?? item.available_count ?? item.done;
+
   return (
-    <div className="progress-row">
-      <div className="progress-header">
-        <strong>{item.manga_title}</strong>
-        <span>
-          {item.done}/{item.total} episodes downloaded
-          {item.running ? `, ${item.running} running` : ""}
-          {item.failed ? `, ${item.failed} failed` : ""}
-        </span>
-      </div>
-      <div className="progress-track" aria-label={`${item.percent}% complete`}>
-        <div className="progress-fill" style={{ width: `${Math.min(100, item.percent)}%` }} />
-      </div>
-      <em>{item.percent}%</em>
-    </div>
+    <article className={`progress-row ${expanded ? "expanded" : ""}`}>
+      <button className="progress-main" onClick={onToggle} title="Open episode list and book actions.">
+        <div className="progress-header">
+          <div>
+            <strong>{item.manga_title}</strong>
+            <span>{item.local_folder ?? "Not in local library yet"}</span>
+          </div>
+          <em>
+            {downloaded}/{episodeTotal} episodes
+            {item.running ? `, ${item.running} running` : ""}
+          </em>
+        </div>
+        <div className="progress-track" aria-label={`${item.percent}% complete`}>
+          <div className="progress-fill" style={{ width: `${Math.min(100, item.percent)}%` }} />
+        </div>
+        <div className="progress-meta">
+          <span>{item.percent}%</span>
+          <span>{item.queued} queued</span>
+          <span>{item.paused} paused</span>
+          <span>{item.failed} failed</span>
+        </div>
+        <ChevronDown className="progress-chevron" size={18} />
+      </button>
+
+      {expanded && (
+        <div className="book-dropdown">
+          <div className="book-action-bar">
+            <IconButton icon={<RefreshCw size={16} />} label="Refresh" title="Refresh this book's details." onClick={onRefresh} disabled={loading} />
+            <IconButton icon={<X size={16} />} label="Close" title="Close this book dropdown." onClick={onClose} disabled={loading} />
+            <IconButton icon={paused ? <Play size={16} /> : <Pause size={16} />} label={paused ? "Resume" : "Pause"} title="Pause or resume queued downloads for this book. Running chapters finish first." onClick={onPause} disabled={loading} />
+            <IconButton icon={<Search size={16} />} label="Quick scan" title="Scan this manga on Asura and enqueue any newly missing chapters." onClick={onSpecificScan} disabled={loading} />
+            <IconButton icon={<UploadCloud size={16} />} label="Import" title="Create or find this book's Komga library without forcing a scan." onClick={onImport} disabled={loading} />
+            <IconButton icon={<Zap size={16} />} label="Fast scan" title="Run Komga quick scan for this book with deep=false." onClick={onQuickScan} disabled={loading} />
+          </div>
+
+          <div className="episode-summary">
+            <DetailStat label="Existing on server" value={`${detail?.existing_downloaded_count ?? item.existing_downloaded_count} episodes`} />
+            <DetailStat label="Newly downloaded" value={`${detail?.newly_downloaded_count ?? item.newly_downloaded_count} episodes`} />
+            <DetailStat label="Storage path" value={detail?.local_folder ?? item.local_folder ?? "Not created yet"} />
+            <DetailStat label="Komga import" value={detail?.komga_imported_at ? new Date(detail.komga_imported_at).toLocaleString() : "Not recorded"} />
+            <DetailStat label="Fast library scan" value={detail?.komga_scanned_at ? new Date(detail.komga_scanned_at).toLocaleString() : "Not recorded"} />
+            <DetailStat label="Komga error" value={detail?.komga_last_error ?? "None"} />
+          </div>
+
+          <div className="episode-list">
+            {localChapters.map((chapter) => (
+              <div key={`local-${chapter}`} className="episode-row existing">
+                <strong>Chapter {chapter}</strong>
+                <span>Existing on server</span>
+              </div>
+            ))}
+            {newlyDownloaded.map((chapter) => (
+              <div key={`new-${chapter.id}`} className="episode-row new">
+                <strong>{chapter.label}</strong>
+                <span>{chapter.file_path}</span>
+              </div>
+            ))}
+            {!detail && <p className="empty">Loading episodes...</p>}
+            {detail && !localChapters.length && !newlyDownloaded.length && (
+              <p className="empty">No downloaded episode paths recorded yet.</p>
+            )}
+          </div>
+        </div>
+      )}
+    </article>
   );
 }
 
-function BookDetailPanel({ book, onClose, onRefresh }: { book: BookDetail; onClose: () => void; onRefresh: () => void }) {
-  const downloadedPaths = book.chapters.filter((chapter) => chapter.is_downloaded && chapter.file_path);
+function IconButton({ icon, label, title, onClick, disabled }: { icon: JSX.Element; label: string; title: string; onClick: () => void; disabled: boolean }) {
   return (
-    <div className="detail-backdrop" role="dialog" aria-modal="true">
-      <section className="detail-panel">
-        <header className="detail-header">
-          <div>
-            <h2>{book.title}</h2>
-            <p>{book.local_folder ?? "No local folder recorded yet"}</p>
-          </div>
-          <div className="button-row">
-            <button className="secondary" onClick={onRefresh}>Refresh</button>
-            <button className="secondary" onClick={() => api.retryFailedBookDownloads(book.id).then(onRefresh)}>Retry failed</button>
-            <button className="secondary" onClick={onClose}>Close</button>
-          </div>
-        </header>
-        <div className="detail-grid">
-          <DetailStat label="Downloaded episodes" value={`${book.downloaded_count} / ${book.remote_chapter_count || book.chapters.length}`} />
-          <DetailStat label="Local path" value={book.local_folder ?? "Not created yet"} />
-          <DetailStat label="Downloads paused" value={book.paused_downloads ? "Yes" : "No"} />
-          <DetailStat label="Komga library ID" value={book.komga_library_id ?? "Not recorded"} />
-          <DetailStat label="Komga import ran" value={book.komga_imported_at ? new Date(book.komga_imported_at).toLocaleString() : "No"} />
-          <DetailStat label="Komga quick scan ran" value={book.komga_scanned_at ? new Date(book.komga_scanned_at).toLocaleString() : "No"} />
-          <DetailStat label="Komga last error" value={book.komga_last_error ?? "None"} />
-        </div>
-        <h3>Downloaded files</h3>
-        <div className="path-list">
-          {downloadedPaths.map((chapter) => (
-            <div key={chapter.id}>
-              <strong>{chapter.label}</strong>
-              <span>{chapter.file_path}</span>
-            </div>
-          ))}
-          {!downloadedPaths.length && <p className="empty">No downloaded chapter paths recorded yet.</p>}
-        </div>
-      </section>
-    </div>
+    <button
+      className="mini-button"
+      onClick={(event) => {
+        event.stopPropagation();
+        onClick();
+      }}
+      disabled={disabled}
+      title={title}
+    >
+      {icon}
+      {label}
+    </button>
   );
 }
 
@@ -502,6 +492,7 @@ function AuthScreen({ authStatus, onAuthenticated }: { authStatus: AuthStatus; o
   return (
     <main className="auth-shell">
       <form className="auth-panel" onSubmit={submit}>
+        <img className="auth-logo" src="/site-icon.png" alt="" />
         <div className="auth-icon"><Lock size={22} /></div>
         <h1>{mode === "register" ? "Create owner account" : "Log in"}</h1>
         <p>
@@ -537,19 +528,6 @@ function Metric({ icon, label, value, tone = "normal" }: { icon: JSX.Element; la
       <div className="metric-icon">{icon}</div>
       <span>{label}</span>
       <strong>{value.toLocaleString()}</strong>
-    </div>
-  );
-}
-
-function JobRow({ job, compact = false }: { job: Job; compact?: boolean }) {
-  return (
-    <div className={`job-row ${job.status} ${compact ? "compact" : ""}`}>
-      <div>
-        <strong>{job.manga_title ?? job.type}</strong>
-        <span>{job.chapter_label ?? `Job ${job.id}`}</span>
-        {job.error && <small>{job.error}</small>}
-      </div>
-      <em>{job.status}</em>
     </div>
   );
 }
