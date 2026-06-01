@@ -1,4 +1,4 @@
-# Asura Komga Manager Design
+# Manga Crawler Design
 
 ## Goal
 

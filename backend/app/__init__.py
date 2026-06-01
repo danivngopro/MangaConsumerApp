@@ -1,1 +1,1 @@
-"""Asura Komga manager backend package."""
+"""Manga Crawler backend package."""

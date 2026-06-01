@@ -17,7 +17,15 @@ import {
   X,
   Zap,
 } from "lucide-react";
-import { api, AuthStatus, BookDetail, BrowseFilters, BrowseResult, DownloadProgress, Summary } from "./api";
+import {
+  api,
+  AuthStatus,
+  BookDetail,
+  BrowseFilters,
+  BrowseResult,
+  DownloadProgress,
+  Summary,
+} from "./api";
 
 const emptySummary: Summary = {
   knownManga: 0,
@@ -42,7 +50,9 @@ export function App() {
   const [progress, setProgress] = useState<DownloadProgress[]>([]);
   const [details, setDetails] = useState<Record<number, BookDetail>>({});
   const [modalBookId, setModalBookId] = useState<number | null>(null);
-  const [browseFilters, setBrowseFilters] = useState<BrowseFilters | null>(null);
+  const [browseFilters, setBrowseFilters] = useState<BrowseFilters | null>(
+    null,
+  );
   const [browseResults, setBrowseResults] = useState<BrowseResult[]>([]);
   const [browseTotal, setBrowseTotal] = useState(0);
   const [browseOffset, setBrowseOffset] = useState(0);
@@ -59,7 +69,9 @@ export function App() {
   const [browseMaxChapters, setBrowseMaxChapters] = useState(0);
   const [searchCollapsed, setSearchCollapsed] = useState(false);
   const [progressSearch, setProgressSearch] = useState("");
-  const [progressFilter, setProgressFilter] = useState<"all" | "downloading" | "queued" | "done">("all");
+  const [progressFilter, setProgressFilter] = useState<
+    "all" | "downloading" | "queued" | "done"
+  >("all");
   const [hideExisting, setHideExisting] = useState(true);
   const [hideStringText, setHideStringText] = useState("");
   const [query, setQuery] = useState("");
@@ -75,7 +87,10 @@ export function App() {
     if (!nextAuthStatus.authenticated) {
       return;
     }
-    const [nextSummary, nextProgress] = await Promise.all([api.summary(), api.progress()]);
+    const [nextSummary, nextProgress] = await Promise.all([
+      api.summary(),
+      api.progress(),
+    ]);
     setSummary(nextSummary);
     setProgress(nextProgress);
     setIntervalDays(nextSummary.autoScanEveryDays);
@@ -120,7 +135,9 @@ export function App() {
 
   async function submitSettings(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
-    await runAction("Settings update", () => api.updateSettings(intervalDays, downloadConcurrency));
+    await runAction("Settings update", () =>
+      api.updateSettings(intervalDays, downloadConcurrency),
+    );
   }
 
   async function confirmAllKomgaScan() {
@@ -148,7 +165,10 @@ export function App() {
     };
   }
 
-  async function submitBrowseSearch(event?: FormEvent<HTMLFormElement>, offset = 0) {
+  async function submitBrowseSearch(
+    event?: FormEvent<HTMLFormElement>,
+    offset = 0,
+  ) {
     event?.preventDefault();
     setBrowseLoading(true);
     setStatus("Searching Asura");
@@ -166,7 +186,11 @@ export function App() {
   }
 
   function toggleGenre(slug: string) {
-    setBrowseGenres((current) => current.includes(slug) ? current.filter((item) => item !== slug) : [...current, slug]);
+    setBrowseGenres((current) =>
+      current.includes(slug)
+        ? current.filter((item) => item !== slug)
+        : [...current, slug],
+    );
   }
 
   const hiddenStrings = hideStringText
@@ -175,7 +199,8 @@ export function App() {
     .filter(Boolean);
   const visibleBrowseResults = browseResults.filter((item) => {
     if (hideExisting && item.is_existing) return false;
-    if (hiddenStrings.some((part) => item.title.toLowerCase().includes(part))) return false;
+    if (hiddenStrings.some((part) => item.title.toLowerCase().includes(part)))
+      return false;
     return true;
   });
 
@@ -196,11 +221,18 @@ export function App() {
     setDetails((current) => ({ ...current, [bookId]: detail }));
   }
 
-  async function pauseOrResumeBook(item: DownloadProgress, detail?: BookDetail) {
+  async function pauseOrResumeBook(
+    item: DownloadProgress,
+    detail?: BookDetail,
+  ) {
     if (detail?.paused_downloads || item.paused > 0) {
-      await runAction(`Resume downloads: ${item.manga_title}`, () => api.resumeBookDownloads(item.manga_id));
+      await runAction(`Resume downloads: ${item.manga_title}`, () =>
+        api.resumeBookDownloads(item.manga_id),
+      );
     } else {
-      await runAction(`Pause downloads: ${item.manga_title}`, () => api.pauseBookDownloads(item.manga_id));
+      await runAction(`Pause downloads: ${item.manga_title}`, () =>
+        api.pauseBookDownloads(item.manga_id),
+      );
     }
     if (modalBookId === item.manga_id) {
       await refreshBook(item.manga_id);
@@ -208,20 +240,34 @@ export function App() {
   }
 
   if (!authStatus) {
-    return <main className="app-shell"><div className="panel">Loading...</div></main>;
+    return (
+      <main className="app-shell">
+        <div className="panel">Loading...</div>
+      </main>
+    );
   }
 
   if (!authStatus.authenticated) {
     return <AuthScreen authStatus={authStatus} onAuthenticated={refresh} />;
   }
 
-  const modalItem = modalBookId ? progress.find((p) => p.manga_id === modalBookId) : null;
+  const modalItem = modalBookId
+    ? progress.find((p) => p.manga_id === modalBookId)
+    : null;
 
   const filteredProgress = progress.filter((item) => {
-    if (progressSearch && !item.manga_title.toLowerCase().includes(progressSearch.toLowerCase())) return false;
+    if (
+      progressSearch &&
+      !item.manga_title.toLowerCase().includes(progressSearch.toLowerCase())
+    )
+      return false;
     if (progressFilter === "downloading" && item.running === 0) return false;
     if (progressFilter === "queued" && item.queued === 0) return false;
-    if (progressFilter === "done" && (item.queued > 0 || item.running > 0 || item.missing_count > 0)) return false;
+    if (
+      progressFilter === "done" &&
+      (item.queued > 0 || item.running > 0 || item.missing_count > 0)
+    )
+      return false;
     return true;
   });
 
@@ -231,28 +277,44 @@ export function App() {
         <div className="brand-block">
           <img className="site-mark" src="/site-icon2.png" alt="" />
           <div>
-            <h1>Asura Komga Manager</h1>
+            <h1>Manga Crawler</h1>
             <p>{summary.libraryRoot || "Backend not connected"}</p>
             <p>Logged in as {authStatus.username}</p>
           </div>
         </div>
         <div className="topbar-actions">
-          <button className="secondary" onClick={() => refresh()} disabled={loading} title="Refresh dashboard data now.">
+          <button
+            className="secondary"
+            onClick={() => refresh()}
+            disabled={loading}
+            title="Refresh dashboard data now."
+          >
             <RefreshCw size={17} />
             Refresh
           </button>
           <button
             className={summary.queuePaused ? "primary" : "secondary"}
-            onClick={() => runAction(summary.queuePaused ? "Queue resume" : "Queue pause", summary.queuePaused ? api.resumeQueue : api.pauseQueue)}
+            onClick={() =>
+              runAction(
+                summary.queuePaused ? "Queue resume" : "Queue pause",
+                summary.queuePaused ? api.resumeQueue : api.pauseQueue,
+              )
+            }
             disabled={loading}
-            title={summary.queuePaused ? "Resume all queued downloads." : "Pause all queued downloads after current running chapters finish."}
+            title={
+              summary.queuePaused
+                ? "Resume all queued downloads."
+                : "Pause all queued downloads after current running chapters finish."
+            }
           >
             {summary.queuePaused ? <Play size={17} /> : <Pause size={17} />}
             {summary.queuePaused ? "Resume all" : "Pause all"}
           </button>
           <button
             className="secondary"
-            onClick={() => runAction("Retry failed downloads", api.retryFailedDownloads)}
+            onClick={() =>
+              runAction("Retry failed downloads", api.retryFailedDownloads)
+            }
             disabled={loading || summary.failedJobs === 0}
             title="Requeue failed chapter downloads and reset their attempt count."
           >
@@ -260,10 +322,12 @@ export function App() {
           </button>
           <button
             className="secondary"
-            onClick={() => runAction("Logout", async () => {
-              await api.logout();
-              setAuthStatus(await api.authStatus());
-            })}
+            onClick={() =>
+              runAction("Logout", async () => {
+                await api.logout();
+                setAuthStatus(await api.authStatus());
+              })
+            }
             disabled={loading}
           >
             Logout
@@ -272,13 +336,38 @@ export function App() {
       </header>
 
       <section className="metrics">
-        <Metric icon={<BookOpen />} label="Local books" value={summary.localBooks} />
-        <Metric icon={<Download />} label="Local chapters" value={summary.localChapters} />
-        <Metric icon={<Search />} label="Known Asura titles" value={summary.knownManga} />
-        <Metric icon={<Clock />} label="Missing chapters" value={summary.missingChapters} />
-        <Metric icon={<Activity />} label="Queued" value={summary.queuedJobs + summary.runningJobs} />
+        <Metric
+          icon={<BookOpen />}
+          label="Local books"
+          value={summary.localBooks}
+        />
+        <Metric
+          icon={<Download />}
+          label="Local chapters"
+          value={summary.localChapters}
+        />
+        <Metric
+          icon={<Search />}
+          label="Known Asura titles"
+          value={summary.knownManga}
+        />
+        <Metric
+          icon={<Clock />}
+          label="Missing chapters"
+          value={summary.missingChapters}
+        />
+        <Metric
+          icon={<Activity />}
+          label="Queued"
+          value={summary.queuedJobs + summary.runningJobs}
+        />
         <Metric icon={<Pause />} label="Paused" value={summary.pausedJobs} />
-        <Metric icon={<Server />} label="Failed" value={summary.failedJobs} tone={summary.failedJobs ? "warn" : "normal"} />
+        <Metric
+          icon={<Server />}
+          label="Failed"
+          value={summary.failedJobs}
+          tone={summary.failedJobs ? "warn" : "normal"}
+        />
       </section>
 
       <section className="control-grid">
@@ -314,7 +403,9 @@ export function App() {
             </button>
             <button
               className="secondary"
-              onClick={() => runAction("Import all libraries", api.importAllBooks)}
+              onClick={() =>
+                runAction("Import all libraries", api.importAllBooks)
+              }
               disabled={loading}
               title="Create a Komga library for every folder in the books root that doesn't have one yet, then trigger a shallow scan. Runs in background."
             >
@@ -335,7 +426,11 @@ export function App() {
             </label>
             <button
               className="secondary"
-              onClick={() => runAction(`Scan first ${scanLimit} books`, () => api.fullScan(scanLimit))}
+              onClick={() =>
+                runAction(`Scan first ${scanLimit} books`, () =>
+                  api.fullScan(scanLimit),
+                )
+              }
               disabled={loading}
               title="Scan only this many Asura books, then enqueue missing chapters for those books."
             >
@@ -348,7 +443,11 @@ export function App() {
               onChange={(event) => setQuery(event.target.value)}
               placeholder="Manga title or Asura URL"
             />
-            <button className="secondary" disabled={loading || !query.trim()} title="Find one Asura manga, compare it against local files, and enqueue missing chapters.">
+            <button
+              className="secondary"
+              disabled={loading || !query.trim()}
+              title="Find one Asura manga, compare it against local files, and enqueue missing chapters."
+            >
               Scan manga
             </button>
           </form>
@@ -368,7 +467,9 @@ export function App() {
                 type="number"
                 min={0}
                 value={intervalDays}
-                onChange={(event) => setIntervalDays(Number(event.target.value))}
+                onChange={(event) =>
+                  setIntervalDays(Number(event.target.value))
+                }
               />
               days
             </label>
@@ -379,13 +480,21 @@ export function App() {
                 min={1}
                 max={6}
                 value={downloadConcurrency}
-                onChange={(event) => setDownloadConcurrency(Number(event.target.value))}
+                onChange={(event) =>
+                  setDownloadConcurrency(Number(event.target.value))
+                }
               />
             </label>
-            <button className="secondary" disabled={loading}>Save</button>
+            <button className="secondary" disabled={loading}>
+              Save
+            </button>
           </form>
           <p className="muted">
-            Auto scan 0 disables scheduling. Concurrent downloads controls parallel chapter workers. Last scan: {summary.lastScanAt ? new Date(summary.lastScanAt).toLocaleString() : "never"}
+            Auto scan 0 disables scheduling. Concurrent downloads controls
+            parallel chapter workers. Last scan:{" "}
+            {summary.lastScanAt
+              ? new Date(summary.lastScanAt).toLocaleString()
+              : "never"}
           </p>
         </div>
       </section>
@@ -396,47 +505,107 @@ export function App() {
           type="button"
           className="panel-collapse-toggle"
           onClick={() => setSearchCollapsed((v) => !v)}
-          title={searchCollapsed ? "Expand Asura Search" : "Collapse Asura Search"}
+          title={
+            searchCollapsed ? "Expand Asura Search" : "Collapse Asura Search"
+          }
         >
           <Search size={18} />
           Asura Search
           {browseResults.length > 0 && !searchCollapsed && (
-            <span style={{ color: "#9aa5b5", fontWeight: 400, fontSize: 13, marginLeft: 4 }}>
+            <span
+              style={{
+                color: "#9aa5b5",
+                fontWeight: 400,
+                fontSize: 13,
+                marginLeft: 4,
+              }}
+            >
               — {visibleBrowseResults.length} results
             </span>
           )}
-          <ChevronDown size={16} className={`collapse-chevron${searchCollapsed ? "" : " open"}`} />
+          <ChevronDown
+            size={16}
+            className={`collapse-chevron${searchCollapsed ? "" : " open"}`}
+          />
         </button>
 
         {!searchCollapsed && (
           <div className="search-panel-body">
-            <form className="browse-form" onSubmit={(event) => submitBrowseSearch(event, 0)}>
+            <form
+              className="browse-form"
+              onSubmit={(event) => submitBrowseSearch(event, 0)}
+            >
               <input
                 value={browseSearch}
                 onChange={(event) => setBrowseSearch(event.target.value)}
                 placeholder="Search Asura titles"
                 title="Search Asura by title."
               />
-              <select value={browseStatus} onChange={(event) => setBrowseStatus(event.target.value)} title="Filter by Asura status.">
-                {(browseFilters?.statuses ?? ["all", "ongoing", "completed", "hiatus", "dropped", "axed"]).map((s) => (
-                  <option key={s} value={s}>{s}</option>
+              <select
+                value={browseStatus}
+                onChange={(event) => setBrowseStatus(event.target.value)}
+                title="Filter by Asura status."
+              >
+                {(
+                  browseFilters?.statuses ?? [
+                    "all",
+                    "ongoing",
+                    "completed",
+                    "hiatus",
+                    "dropped",
+                    "axed",
+                  ]
+                ).map((s) => (
+                  <option key={s} value={s}>
+                    {s}
+                  </option>
                 ))}
               </select>
-              <select value={browseType} onChange={(event) => setBrowseType(event.target.value)} title="Filter by series type.">
-                {(browseFilters?.types ?? ["all", "manhwa", "manhua", "manga"]).map((t) => (
-                  <option key={t} value={t}>{t}</option>
+              <select
+                value={browseType}
+                onChange={(event) => setBrowseType(event.target.value)}
+                title="Filter by series type."
+              >
+                {(
+                  browseFilters?.types ?? ["all", "manhwa", "manhua", "manga"]
+                ).map((t) => (
+                  <option key={t} value={t}>
+                    {t}
+                  </option>
                 ))}
               </select>
-              <select value={browseSort} onChange={(event) => setBrowseSort(event.target.value)} title="Sort Asura results.">
-                {(browseFilters?.sorts ?? ["latest", "popular", "rating", "title", "chapters"]).map((s) => (
-                  <option key={s} value={s}>{s}</option>
+              <select
+                value={browseSort}
+                onChange={(event) => setBrowseSort(event.target.value)}
+                title="Sort Asura results."
+              >
+                {(
+                  browseFilters?.sorts ?? [
+                    "latest",
+                    "popular",
+                    "rating",
+                    "title",
+                    "chapters",
+                  ]
+                ).map((s) => (
+                  <option key={s} value={s}>
+                    {s}
+                  </option>
                 ))}
               </select>
-              <select value={browseOrder} onChange={(event) => setBrowseOrder(event.target.value)} title="Sort direction.">
+              <select
+                value={browseOrder}
+                onChange={(event) => setBrowseOrder(event.target.value)}
+                title="Sort direction."
+              >
                 <option value="desc">desc</option>
                 <option value="asc">asc</option>
               </select>
-              <button className="primary" disabled={browseLoading} title="Search Asura using the selected filters.">
+              <button
+                className="primary"
+                disabled={browseLoading}
+                title="Search Asura using the selected filters."
+              >
                 Search
               </button>
             </form>
@@ -452,7 +621,9 @@ export function App() {
                   list="author-options"
                 />
                 <datalist id="author-options">
-                  {(browseFilters?.authors ?? []).map((a) => <option key={a} value={a} />)}
+                  {(browseFilters?.authors ?? []).map((a) => (
+                    <option key={a} value={a} />
+                  ))}
                 </datalist>
               </label>
               <label title="Filter by artist name.">
@@ -464,7 +635,9 @@ export function App() {
                   list="artist-options"
                 />
                 <datalist id="artist-options">
-                  {(browseFilters?.artists ?? []).map((a) => <option key={a} value={a} />)}
+                  {(browseFilters?.artists ?? []).map((a) => (
+                    <option key={a} value={a} />
+                  ))}
                 </datalist>
               </label>
               <label title="Show only series with at least this many chapters.">
@@ -473,7 +646,9 @@ export function App() {
                   type="number"
                   min={0}
                   value={browseMinChapters}
-                  onChange={(event) => setBrowseMinChapters(Number(event.target.value))}
+                  onChange={(event) =>
+                    setBrowseMinChapters(Number(event.target.value))
+                  }
                   placeholder="0 = any"
                 />
               </label>
@@ -483,7 +658,9 @@ export function App() {
                   type="number"
                   min={0}
                   value={browseMaxChapters}
-                  onChange={(event) => setBrowseMaxChapters(Number(event.target.value))}
+                  onChange={(event) =>
+                    setBrowseMaxChapters(Number(event.target.value))
+                  }
                   placeholder="0 = no limit"
                 />
               </label>
@@ -491,12 +668,23 @@ export function App() {
 
             <div className="filter-options">
               <label title="Hide books already found in your local Komga folder.">
-                <input type="checkbox" checked={hideExisting} onChange={(event) => setHideExisting(event.target.checked)} />
+                <input
+                  type="checkbox"
+                  checked={hideExisting}
+                  onChange={(event) => setHideExisting(event.target.checked)}
+                />
                 Hide existing books
               </label>
-              <label className="hide-strings" title="Comma or newline separated strings. Any matching title is hidden from the results.">
+              <label
+                className="hide-strings"
+                title="Comma or newline separated strings. Any matching title is hidden from the results."
+              >
                 Hide titles containing
-                <textarea value={hideStringText} onChange={(event) => setHideStringText(event.target.value)} placeholder="academy, regression, necromancer" />
+                <textarea
+                  value={hideStringText}
+                  onChange={(event) => setHideStringText(event.target.value)}
+                  placeholder="academy, regression, necromancer"
+                />
               </label>
             </div>
 
@@ -505,7 +693,9 @@ export function App() {
                 <button
                   key={genre.slug}
                   type="button"
-                  className={browseGenres.includes(genre.slug) ? "chip selected" : "chip"}
+                  className={
+                    browseGenres.includes(genre.slug) ? "chip selected" : "chip"
+                  }
                   onClick={() => toggleGenre(genre.slug)}
                   title={`Toggle ${genre.name} genre filter.`}
                 >
@@ -516,20 +706,50 @@ export function App() {
 
             <div className="search-results-header">
               <span>
-                Showing {visibleBrowseResults.length} of {browseResults.length} loaded results
-                {browseTotal ? `, ${browseTotal.toLocaleString()} total from Asura` : ""}
+                Showing {visibleBrowseResults.length} of {browseResults.length}{" "}
+                loaded results
+                {browseTotal
+                  ? `, ${browseTotal.toLocaleString()} total from Asura`
+                  : ""}
               </span>
               <div className="button-row">
                 <button
                   className="primary"
-                  disabled={browseLoading || loading || browseResults.length === 0}
-                  onClick={() => runAction("Priority scan", () => api.priorityScan(browsePayload()))}
+                  disabled={
+                    browseLoading || loading || browseResults.length === 0
+                  }
+                  onClick={() =>
+                    runAction("Priority scan", () =>
+                      api.priorityScan(browsePayload()),
+                    )
+                  }
                   title="Scan all books matching the current filters (all pages) and place their missing chapters at the front of the download queue. Runs in background."
                 >
                   Priority scan all
                 </button>
-                <button className="secondary" disabled={browseLoading || browseOffset === 0} onClick={() => submitBrowseSearch(undefined, Math.max(0, browseOffset - 24))} title="Load previous Asura result page.">Previous</button>
-                <button className="secondary" disabled={browseLoading || browseOffset + 24 >= browseTotal} onClick={() => submitBrowseSearch(undefined, browseOffset + 24)} title="Load next Asura result page.">Next</button>
+                <button
+                  className="secondary"
+                  disabled={browseLoading || browseOffset === 0}
+                  onClick={() =>
+                    submitBrowseSearch(
+                      undefined,
+                      Math.max(0, browseOffset - 24),
+                    )
+                  }
+                  title="Load previous Asura result page."
+                >
+                  Previous
+                </button>
+                <button
+                  className="secondary"
+                  disabled={browseLoading || browseOffset + 24 >= browseTotal}
+                  onClick={() =>
+                    submitBrowseSearch(undefined, browseOffset + 24)
+                  }
+                  title="Load next Asura result page."
+                >
+                  Next
+                </button>
               </div>
             </div>
 
@@ -539,10 +759,16 @@ export function App() {
                   key={item.id}
                   item={item}
                   loading={loading || browseLoading}
-                  onAdd={() => runAction(`Add book: ${item.title}`, () => api.specificPriorityScan(item.url))}
+                  onAdd={() =>
+                    runAction(`Add book: ${item.title}`, () =>
+                      api.specificPriorityScan(item.url),
+                    )
+                  }
                 />
               ))}
-              {!visibleBrowseResults.length && <p className="empty">No visible search results yet.</p>}
+              {!visibleBrowseResults.length && (
+                <p className="empty">No visible search results yet.</p>
+              )}
             </div>
           </div>
         )}
@@ -575,7 +801,9 @@ export function App() {
               </button>
             ))}
           </div>
-          <span className="progress-count">{filteredProgress.length} / {progress.length}</span>
+          <span className="progress-count">
+            {filteredProgress.length} / {progress.length}
+          </span>
         </div>
         {filteredProgress.length ? (
           <div className="progress-list">
@@ -590,7 +818,11 @@ export function App() {
             ))}
           </div>
         ) : (
-          <p className="empty">{progress.length ? "No books match the current filter." : "No tracked books yet. Run a scan to populate progress."}</p>
+          <p className="empty">
+            {progress.length
+              ? "No books match the current filter."
+              : "No tracked books yet. Run a scan to populate progress."}
+          </p>
         )}
       </section>
 
@@ -601,13 +833,37 @@ export function App() {
           detail={details[modalBookId]}
           loading={loading}
           onClose={() => setModalBookId(null)}
-          onRefresh={() => runAction(`Refresh: ${modalItem.manga_title}`, () => refreshBook(modalBookId))}
-          onDownloadNow={() => runAction(`Download now: ${modalItem.manga_title}`, () => api.downloadNow(modalBookId))}
+          onRefresh={() =>
+            runAction(`Refresh: ${modalItem.manga_title}`, () =>
+              refreshBook(modalBookId),
+            )
+          }
+          onDownloadNow={() =>
+            runAction(`Download now: ${modalItem.manga_title}`, () =>
+              api.downloadNow(modalBookId),
+            )
+          }
           onPause={() => pauseOrResumeBook(modalItem, details[modalBookId])}
-          onQuickScan={() => runAction(`Fast Komga scan: ${modalItem.manga_title}`, () => api.quickScanBook(modalBookId))}
-          onImport={() => runAction(`Komga import: ${modalItem.manga_title}`, () => api.importBook(modalBookId))}
-          onRetryFailed={() => runAction(`Retry failed: ${modalItem.manga_title}`, () => api.retryFailedBookDownloads(modalBookId))}
-          onSpecificScan={() => runAction(`Quick scan: ${modalItem.manga_title}`, () => api.specificScan(modalItem.url || modalItem.manga_title))}
+          onQuickScan={() =>
+            runAction(`Fast Komga scan: ${modalItem.manga_title}`, () =>
+              api.quickScanBook(modalBookId),
+            )
+          }
+          onImport={() =>
+            runAction(`Komga import: ${modalItem.manga_title}`, () =>
+              api.importBook(modalBookId),
+            )
+          }
+          onRetryFailed={() =>
+            runAction(`Retry failed: ${modalItem.manga_title}`, () =>
+              api.retryFailedBookDownloads(modalBookId),
+            )
+          }
+          onSpecificScan={() =>
+            runAction(`Quick scan: ${modalItem.manga_title}`, () =>
+              api.specificScan(modalItem.url || modalItem.manga_title),
+            )
+          }
         />
       )}
     </main>
@@ -617,21 +873,34 @@ export function App() {
 function TotalProgressBar({ progress }: { progress: DownloadProgress[] }) {
   const totalDone = progress.reduce((sum, p) => sum + p.done, 0);
   const totalItems = progress.reduce((sum, p) => sum + p.total, 0);
-  const totalActive = progress.reduce((sum, p) => sum + p.queued + p.running, 0);
-  const percent = totalItems > 0 ? Math.round((totalDone / totalItems) * 100) : 0;
+  const totalActive = progress.reduce(
+    (sum, p) => sum + p.queued + p.running,
+    0,
+  );
+  const percent =
+    totalItems > 0 ? Math.round((totalDone / totalItems) * 100) : 0;
 
   if (!totalItems) return null;
 
   return (
     <div className="panel total-progress-panel">
       <div className="total-progress-header">
-        <span><Download size={14} /> Overall progress</span>
-        <span>{totalDone.toLocaleString()} / {totalItems.toLocaleString()} episodes</span>
+        <span>
+          <Download size={14} /> Overall progress
+        </span>
+        <span>
+          {totalDone.toLocaleString()} / {totalItems.toLocaleString()} episodes
+        </span>
         <span className="total-percent">{percent}%</span>
-        {totalActive > 0 && <span className="total-active">{totalActive} active</span>}
+        {totalActive > 0 && (
+          <span className="total-active">{totalActive} active</span>
+        )}
       </div>
       <div className="progress-track">
-        <div className="progress-fill" style={{ width: `${Math.min(100, percent)}%` }} />
+        <div
+          className="progress-fill"
+          style={{ width: `${Math.min(100, percent)}%` }}
+        />
       </div>
     </div>
   );
@@ -653,7 +922,12 @@ function ProgressRow({
 
   return (
     <article className={`progress-row${active ? " active" : ""}`}>
-      <button className="progress-main" onClick={onOpen} disabled={loading} title="Open details popup.">
+      <button
+        className="progress-main"
+        onClick={onOpen}
+        disabled={loading}
+        title="Open details popup."
+      >
         <div className="progress-header">
           <div>
             <strong>{item.manga_title}</strong>
@@ -664,14 +938,22 @@ function ProgressRow({
             {item.running ? `, ${item.running} running` : ""}
           </em>
         </div>
-        <div className="progress-track" aria-label={`${item.percent}% complete`}>
-          <div className="progress-fill" style={{ width: `${Math.min(100, item.percent)}%` }} />
+        <div
+          className="progress-track"
+          aria-label={`${item.percent}% complete`}
+        >
+          <div
+            className="progress-fill"
+            style={{ width: `${Math.min(100, item.percent)}%` }}
+          />
         </div>
         <div className="progress-meta">
           <span>{item.percent}%</span>
           <span>{item.queued} queued</span>
           {item.paused > 0 && <span>{item.paused} paused</span>}
-          {item.failed > 0 && <span style={{ color: "#fca5a5" }}>{item.failed} failed</span>}
+          {item.failed > 0 && (
+            <span style={{ color: "#fca5a5" }}>{item.failed} failed</span>
+          )}
         </div>
         <ChevronDown className="progress-chevron" size={18} />
       </button>
@@ -706,14 +988,20 @@ function BookDetailModal({
 }) {
   const paused = Boolean(detail?.paused_downloads || item.paused > 0);
   const localChapters = detail?.local_chapters ?? [];
-  const newlyDownloaded = detail?.chapters.filter((ch) => ch.is_downloaded && ch.file_path) ?? [];
+  const newlyDownloaded =
+    detail?.chapters.filter((ch) => ch.is_downloaded && ch.file_path) ?? [];
   // Compute missing dynamically from remote - available (available already caps at remote)
   const computedMissing = detail
-    ? Math.max(0, (detail.remote_chapter_count ?? 0) - (detail.downloaded_count ?? 0))
+    ? Math.max(
+        0,
+        (detail.remote_chapter_count ?? 0) - (detail.downloaded_count ?? 0),
+      )
     : item.missing_count;
 
   useEffect(() => {
-    const handler = (e: KeyboardEvent) => { if (e.key === "Escape") onClose(); };
+    const handler = (e: KeyboardEvent) => {
+      if (e.key === "Escape") onClose();
+    };
     document.addEventListener("keydown", handler);
     return () => document.removeEventListener("keydown", handler);
   }, [onClose]);
@@ -726,13 +1014,23 @@ function BookDetailModal({
             <h2>{item.manga_title}</h2>
             <p>{item.local_folder ?? "Not in local library yet"}</p>
           </div>
-          <button className="secondary" onClick={onClose} title="Close this panel.">
+          <button
+            className="secondary"
+            onClick={onClose}
+            title="Close this panel."
+          >
             <X size={16} /> Close
           </button>
         </div>
 
         <div className="book-action-bar">
-          <IconButton icon={<RefreshCw size={16} />} label="Refresh" title="Refresh this book's details." onClick={onRefresh} disabled={loading} />
+          <IconButton
+            icon={<RefreshCw size={16} />}
+            label="Refresh"
+            title="Refresh this book's details."
+            onClick={onRefresh}
+            disabled={loading}
+          />
           <IconButton
             icon={<Download size={16} />}
             label="Download now"
@@ -747,23 +1045,78 @@ function BookDetailModal({
             onClick={onPause}
             disabled={loading}
           />
-          <IconButton icon={<Search size={16} />} label="Quick scan" title="Scan this manga on Asura and enqueue any newly missing chapters." onClick={onSpecificScan} disabled={loading} />
-          <IconButton icon={<RefreshCw size={16} />} label="Retry failed" title="Requeue failed chapter downloads for this book." onClick={onRetryFailed} disabled={loading || item.failed === 0} />
-          <IconButton icon={<UploadCloud size={16} />} label="Import" title="Create or find this book's Komga library without forcing a scan." onClick={onImport} disabled={loading} />
-          <IconButton icon={<Zap size={16} />} label="Fast scan" title="Run Komga quick scan for this book with deep=false." onClick={onQuickScan} disabled={loading} />
+          <IconButton
+            icon={<Search size={16} />}
+            label="Quick scan"
+            title="Scan this manga on Asura and enqueue any newly missing chapters."
+            onClick={onSpecificScan}
+            disabled={loading}
+          />
+          <IconButton
+            icon={<RefreshCw size={16} />}
+            label="Retry failed"
+            title="Requeue failed chapter downloads for this book."
+            onClick={onRetryFailed}
+            disabled={loading || item.failed === 0}
+          />
+          <IconButton
+            icon={<UploadCloud size={16} />}
+            label="Import"
+            title="Create or find this book's Komga library without forcing a scan."
+            onClick={onImport}
+            disabled={loading}
+          />
+          <IconButton
+            icon={<Zap size={16} />}
+            label="Fast scan"
+            title="Run Komga quick scan for this book with deep=false."
+            onClick={onQuickScan}
+            disabled={loading}
+          />
         </div>
 
         <div className="episode-summary">
           <DetailStat label="Status" value={detail?.status ?? "unknown"} />
-          <DetailStat label="On disk" value={`${detail?.local_chapter_count ?? item.existing_downloaded_count} episodes`} />
-          <DetailStat label="Asura total" value={`${detail?.remote_chapter_count ?? item.remote_chapter_count} episodes`} />
+          <DetailStat
+            label="On disk"
+            value={`${detail?.local_chapter_count ?? item.existing_downloaded_count} episodes`}
+          />
+          <DetailStat
+            label="Asura total"
+            value={`${detail?.remote_chapter_count ?? item.remote_chapter_count} episodes`}
+          />
           <DetailStat label="Missing" value={`${computedMissing} episodes`} />
-          <DetailStat label="Downloaded by app" value={`${detail?.newly_downloaded_count ?? item.newly_downloaded_count} episodes`} />
+          <DetailStat
+            label="Downloaded by app"
+            value={`${detail?.newly_downloaded_count ?? item.newly_downloaded_count} episodes`}
+          />
           <DetailStat label="Queued" value={`${item.queued}`} />
-          <DetailStat label="Storage path" value={detail?.local_folder ?? item.local_folder ?? "Not created yet"} />
-          <DetailStat label="Komga import" value={detail?.komga_imported_at ? new Date(detail.komga_imported_at).toLocaleString() : "Not recorded"} />
-          <DetailStat label="Fast library scan" value={detail?.komga_scanned_at ? new Date(detail.komga_scanned_at).toLocaleString() : "Not recorded"} />
-          <DetailStat label="Komga error" value={detail?.komga_last_error ?? "None"} />
+          <DetailStat
+            label="Storage path"
+            value={
+              detail?.local_folder ?? item.local_folder ?? "Not created yet"
+            }
+          />
+          <DetailStat
+            label="Komga import"
+            value={
+              detail?.komga_imported_at
+                ? new Date(detail.komga_imported_at).toLocaleString()
+                : "Not recorded"
+            }
+          />
+          <DetailStat
+            label="Fast library scan"
+            value={
+              detail?.komga_scanned_at
+                ? new Date(detail.komga_scanned_at).toLocaleString()
+                : "Not recorded"
+            }
+          />
+          <DetailStat
+            label="Komga error"
+            value={detail?.komga_last_error ?? "None"}
+          />
         </div>
 
         <div className="episode-list">
@@ -789,14 +1142,37 @@ function BookDetailModal({
   );
 }
 
-function BrowseResultRow({ item, loading, onAdd }: { item: BrowseResult; loading: boolean; onAdd: () => void }) {
+function BrowseResultRow({
+  item,
+  loading,
+  onAdd,
+}: {
+  item: BrowseResult;
+  loading: boolean;
+  onAdd: () => void;
+}) {
   return (
     <div className="browse-result-row">
-      {item.cover_url ? <img src={item.cover_url} alt="" loading="lazy" /> : <div className="cover-placeholder"><BookOpen size={20} /></div>}
+      {item.cover_url ? (
+        <img src={item.cover_url} alt="" loading="lazy" />
+      ) : (
+        <div className="cover-placeholder">
+          <BookOpen size={20} />
+        </div>
+      )}
       <div>
-        <a href={item.url} target="_blank" rel="noreferrer">{item.title}</a>
-        <span>{[item.status, item.type, `${item.chapter_count} episodes`].filter(Boolean).join(" · ")}</span>
-        <small>{item.genres.map((genre) => genre.name).join(", ") || "No genres listed"}</small>
+        <a href={item.url} target="_blank" rel="noreferrer">
+          {item.title}
+        </a>
+        <span>
+          {[item.status, item.type, `${item.chapter_count} episodes`]
+            .filter(Boolean)
+            .join(" · ")}
+        </span>
+        <small>
+          {item.genres.map((genre) => genre.name).join(", ") ||
+            "No genres listed"}
+        </small>
         {item.local_folder && <small>{item.local_folder}</small>}
       </div>
       <div className="browse-counts">
@@ -804,14 +1180,31 @@ function BrowseResultRow({ item, loading, onAdd }: { item: BrowseResult; loading
         <DetailStat label="Asura" value={`${item.chapter_count}`} />
         <DetailStat label="Missing" value={`${item.missing_count}`} />
       </div>
-      <button className="primary" onClick={onAdd} disabled={loading} title="Add this book by scanning it and queueing missing chapters.">
+      <button
+        className="primary"
+        onClick={onAdd}
+        disabled={loading}
+        title="Add this book by scanning it and queueing missing chapters."
+      >
         Add
       </button>
     </div>
   );
 }
 
-function IconButton({ icon, label, title, onClick, disabled }: { icon: JSX.Element; label: string; title: string; onClick: () => void; disabled: boolean }) {
+function IconButton({
+  icon,
+  label,
+  title,
+  onClick,
+  disabled,
+}: {
+  icon: JSX.Element;
+  label: string;
+  title: string;
+  onClick: () => void;
+  disabled: boolean;
+}) {
   return (
     <button
       className="mini-button"
@@ -837,7 +1230,13 @@ function DetailStat({ label, value }: { label: string; value: string }) {
   );
 }
 
-function AuthScreen({ authStatus, onAuthenticated }: { authStatus: AuthStatus; onAuthenticated: () => Promise<void> }) {
+function AuthScreen({
+  authStatus,
+  onAuthenticated,
+}: {
+  authStatus: AuthStatus;
+  onAuthenticated: () => Promise<void>;
+}) {
   const [username, setUsername] = useState("");
   const [password, setPassword] = useState("");
   const [error, setError] = useState("");
@@ -866,7 +1265,9 @@ function AuthScreen({ authStatus, onAuthenticated }: { authStatus: AuthStatus; o
     <main className="auth-shell">
       <form className="auth-panel" onSubmit={submit}>
         <img className="auth-logo" src="/site-icon2.png" alt="" />
-        <div className="auth-icon"><Lock size={22} /></div>
+        <div className="auth-icon">
+          <Lock size={22} />
+        </div>
         <h1>{mode === "register" ? "Create owner account" : "Log in"}</h1>
         <p>
           {mode === "register"
@@ -875,7 +1276,11 @@ function AuthScreen({ authStatus, onAuthenticated }: { authStatus: AuthStatus; o
         </p>
         <label>
           Username
-          <input value={username} onChange={(event) => setUsername(event.target.value)} autoComplete="username" />
+          <input
+            value={username}
+            onChange={(event) => setUsername(event.target.value)}
+            autoComplete="username"
+          />
         </label>
         <label>
           Password
@@ -883,11 +1288,16 @@ function AuthScreen({ authStatus, onAuthenticated }: { authStatus: AuthStatus; o
             value={password}
             onChange={(event) => setPassword(event.target.value)}
             type="password"
-            autoComplete={mode === "register" ? "new-password" : "current-password"}
+            autoComplete={
+              mode === "register" ? "new-password" : "current-password"
+            }
           />
         </label>
         {error && <div className="auth-error">{error}</div>}
-        <button className="primary" disabled={loading || !username.trim() || !password}>
+        <button
+          className="primary"
+          disabled={loading || !username.trim() || !password}
+        >
           {mode === "register" ? "Register owner" : "Log in"}
         </button>
       </form>
@@ -895,7 +1305,17 @@ function AuthScreen({ authStatus, onAuthenticated }: { authStatus: AuthStatus; o
   );
 }
 
-function Metric({ icon, label, value, tone = "normal" }: { icon: JSX.Element; label: string; value: number; tone?: "normal" | "warn" }) {
+function Metric({
+  icon,
+  label,
+  value,
+  tone = "normal",
+}: {
+  icon: JSX.Element;
+  label: string;
+  value: number;
+  tone?: "normal" | "warn";
+}) {
   return (
     <div className={`metric ${tone}`}>
       <div className="metric-icon">{icon}</div>

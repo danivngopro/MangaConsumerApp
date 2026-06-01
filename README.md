@@ -1,4 +1,4 @@
-# Asura Komga Manager
+# Manga Crawler
 
 Local fullstack app for scanning Asura Scans, indexing a Komga books folder, and queueing missing chapter downloads as CBZ files.
 

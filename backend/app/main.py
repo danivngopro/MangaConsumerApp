@@ -84,7 +84,7 @@ download_queue = DownloadQueue(
 )
 scan_scheduler = ScanScheduler(conn, asura_client, settings.library_root)
 
-app = FastAPI(title="Asura Komga Manager")
+app = FastAPI(title="Manga Crawler")
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["http://localhost:5173", "http://127.0.0.1:5173"],

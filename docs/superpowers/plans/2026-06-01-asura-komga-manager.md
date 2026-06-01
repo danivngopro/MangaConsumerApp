@@ -1,4 +1,4 @@
-# Asura Komga Manager Implementation Plan
+# Manga Crawler Implementation Plan
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
@@ -13,6 +13,7 @@
 ### Task 1: Project Scaffold
 
 **Files:**
+
 - Create: `requirements.txt`
 - Create: `.env.example`
 - Create: `backend/app/__init__.py`
@@ -31,6 +32,7 @@
 ### Task 2: Persistence Layer
 
 **Files:**
+
 - Create: `backend/app/database.py`
 - Create: `backend/app/models.py`
 - Create: `backend/app/repository.py`
@@ -42,6 +44,7 @@
 ### Task 3: Asura Scanner
 
 **Files:**
+
 - Create: `backend/app/asura.py`
 
 - [ ] Fetch browse pages with a browser-like user agent.
@@ -52,6 +55,7 @@
 ### Task 4: Local Library Scanner
 
 **Files:**
+
 - Create: `backend/app/library.py`
 
 - [ ] Walk the configured books root.
@@ -62,6 +66,7 @@
 ### Task 5: Downloader Queue
 
 **Files:**
+
 - Create: `backend/app/downloader.py`
 - Create: `backend/app/queue.py`
 
@@ -74,6 +79,7 @@
 ### Task 6: Scheduler and API
 
 **Files:**
+
 - Create: `backend/app/scheduler.py`
 - Modify: `backend/app/main.py`
 
@@ -83,6 +89,7 @@
 ### Task 7: React Dashboard
 
 **Files:**
+
 - Create: `frontend/src/api.ts`
 - Modify: `frontend/src/App.tsx`
 - Modify: `frontend/src/styles.css`
@@ -96,6 +103,7 @@
 ### Task 8: Verification
 
 **Files:**
+
 - Create: `README.md`
 
 - [ ] Run `python -m py_compile` on backend modules.
