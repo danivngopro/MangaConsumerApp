@@ -158,6 +158,8 @@ def summary(_user: dict = Depends(authenticated_user)) -> dict:
     data["komgaUrl"] = settings.komga_url
     data["autoScanEveryDays"] = int(repository.get_setting(conn, "auto_scan_every_days", "0") or "0")
     data["downloadConcurrency"] = download_queue.concurrency
+    data["limitedScanActive"] = repository.get_setting(conn, "limited_scan_active", "0") == "1"
+    data["scanRunning"] = scan_scheduler.scan_running
     return data
 
 
@@ -255,6 +257,11 @@ def start_full_scan(payload: FullScanRequest | None = None, _user: dict = Depend
         limit = max(1, min(500, int(payload.limit)))
     scan_scheduler.run_full_scan_async(limit)
     return {"started": True, "limit": limit}
+
+
+@app.post("/api/scan/stop")
+def stop_scan(_user: dict = Depends(authenticated_user)) -> dict:
+    return scan_scheduler.cancel_current_scan()
 
 
 @app.post("/api/scan/specific")

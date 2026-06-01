@@ -4,6 +4,7 @@ import html
 import re
 import time
 from dataclasses import dataclass
+from collections.abc import Callable
 from typing import Any
 from urllib.parse import urljoin, urlparse
 
@@ -148,15 +149,26 @@ class AsuraClient:
             "offset": params["offset"],
         }
 
-    def crawl_catalog(self, max_pages: int = 200, limit: int | None = None) -> list[AsuraSeries]:
+    def crawl_catalog(
+        self,
+        max_pages: int = 200,
+        limit: int | None = None,
+        should_stop: Callable[[], bool] | None = None,
+    ) -> list[AsuraSeries]:
         series: dict[str, AsuraSeries] = {}
         page = 1
 
         while page <= max_pages:
+            if should_stop and should_stop():
+                break
             path = "/browse" if page == 1 else f"/browse?page={page}"
             text = self._get(path)
+            if should_stop and should_stop():
+                break
             page_items = self.parse_browse_page(text)
             for item in page_items:
+                if should_stop and should_stop():
+                    break
                 series[item.slug] = item
                 if limit and len(series) >= limit:
                     return list(series.values())[:limit]

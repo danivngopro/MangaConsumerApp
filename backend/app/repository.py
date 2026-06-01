@@ -449,7 +449,7 @@ def delete_queued_downloads(conn: sqlite3.Connection, zero_percent_only: bool = 
                 """
                 DELETE FROM jobs
                 WHERE type = 'download'
-                  AND status = 'queued'
+                  AND status IN ('queued', 'paused', 'auto_paused')
                   AND COALESCE(manga_id, 0) IN (
                     SELECT m.id
                     FROM manga m
@@ -465,7 +465,7 @@ def delete_queued_downloads(conn: sqlite3.Connection, zero_percent_only: bool = 
                         FROM jobs started
                         WHERE started.type = 'download'
                           AND started.manga_id = m.id
-                          AND started.status IN ('running', 'done', 'failed', 'paused', 'auto_paused')
+                          AND started.status IN ('running', 'done', 'failed')
                       )
                   )
                 """
@@ -474,7 +474,7 @@ def delete_queued_downloads(conn: sqlite3.Connection, zero_percent_only: bool = 
             cursor = conn.execute(
                 """
                 DELETE FROM jobs
-                WHERE type = 'download' AND status = 'queued'
+                WHERE type = 'download' AND status IN ('queued', 'paused', 'auto_paused')
                 """
             )
         conn.commit()

@@ -19,6 +19,7 @@ class ScanScheduler:
         self._stop = threading.Event()
         self._thread: threading.Thread | None = None
         self._scan_lock = threading.Lock()
+        self._cancel_scan = threading.Event()
 
     def start(self) -> None:
         if self._thread and self._thread.is_alive():
@@ -37,13 +38,31 @@ class ScanScheduler:
             return
         threading.Thread(target=lambda: self.run_full_scan(None), name="manual-full-scan", daemon=True).start()
 
+    def cancel_current_scan(self) -> dict:
+        self._cancel_scan.set()
+        repository.set_setting(self.conn, "limited_scan_active", "0")
+        repository.set_json_setting(self.conn, "limited_scan_batch_manga_ids", [])
+        repository.log(self.conn, "info", "Scan stop requested")
+        return {"stopRequested": True, "scanRunning": self.scan_running}
+
+    @property
+    def scan_running(self) -> bool:
+        return self._scan_lock.locked()
+
     def run_full_scan(self, limit: int | None = None) -> dict | None:
         if not self._scan_lock.acquire(blocking=False):
             repository.log(self.conn, "info", "Full scan request ignored because a scan is already running")
             return None
+        self._cancel_scan.clear()
         try:
-            result = scan_full_catalog(self.conn, self.client, self.library_root, limit)
-            if limit is None:
+            result = scan_full_catalog(
+                self.conn,
+                self.client,
+                self.library_root,
+                limit,
+                should_stop=self._cancel_scan.is_set,
+            )
+            if limit is None and not result.get("stopped"):
                 repository.set_setting(self.conn, "last_full_scan_at", datetime.now(timezone.utc).isoformat())
             return result
         except Exception as exc:
@@ -54,6 +73,7 @@ class ScanScheduler:
 
     def start_limited_scan(self, batch_size: int) -> dict | None:
         batch_size = max(1, int(batch_size))
+        self._cancel_scan.clear()
         repository.set_setting(self.conn, "limited_scan_active", "1")
         repository.set_setting(self.conn, "limited_scan_batch_size", str(batch_size))
         repository.set_setting(self.conn, "limited_scan_offset", "0")
@@ -68,10 +88,21 @@ class ScanScheduler:
         try:
             batch_size = int(repository.get_setting(self.conn, "limited_scan_batch_size", "10") or "10")
             offset = int(repository.get_setting(self.conn, "limited_scan_offset", "0") or "0")
-            result = scan_limited_catalog_batch(self.conn, self.client, self.library_root, batch_size, offset)
+            result = scan_limited_catalog_batch(
+                self.conn,
+                self.client,
+                self.library_root,
+                batch_size,
+                offset,
+                should_stop=self._cancel_scan.is_set,
+            )
             repository.set_setting(self.conn, "limited_scan_offset", str(result["nextOffset"]))
             repository.set_json_setting(self.conn, "limited_scan_batch_manga_ids", result["batchMangaIds"])
-            if not result["batchMangaIds"] or result["exhausted"]:
+            if result.get("stopped"):
+                repository.set_setting(self.conn, "limited_scan_active", "0")
+                repository.set_json_setting(self.conn, "limited_scan_batch_manga_ids", [])
+                repository.log(self.conn, "info", "Limited scan stopped by user request")
+            elif not result["batchMangaIds"] or result["exhausted"]:
                 repository.set_setting(self.conn, "limited_scan_active", "0")
                 repository.log(self.conn, "info", "Limited scan stopped because the Asura catalog has no more books with downloads in range")
             return result

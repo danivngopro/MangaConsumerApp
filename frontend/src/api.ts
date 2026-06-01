@@ -9,6 +9,8 @@ export type Summary = {
   missingChapters: number;
   lastScanAt: string | null;
   queuePaused: boolean;
+  limitedScanActive: boolean;
+  scanRunning: boolean;
   libraryRoot: string;
   komgaUrl: string;
   autoScanEveryDays: number;
@@ -186,6 +188,10 @@ export const api = {
     request<{ started: boolean; limit: number | null }>("/api/scan/full", {
       method: "POST",
       body: JSON.stringify({ limit: limit || null }),
+    }),
+  stopScan: () =>
+    request<{ stopRequested: boolean; scanRunning: boolean }>("/api/scan/stop", {
+      method: "POST",
     }),
   libraryScan: () =>
     request<{ books: number; chapters: number; error: string | null }>(

@@ -1,31 +1,43 @@
 from __future__ import annotations
 
 import sqlite3
+from collections.abc import Callable
 
 from .asura import AsuraClient, AsuraSeries
 from .library import local_match_for_title, scan_library
 from . import repository
 
 
-def scan_full_catalog(conn: sqlite3.Connection, client: AsuraClient, library_root, limit: int | None = None) -> dict:
+def scan_full_catalog(
+    conn: sqlite3.Connection,
+    client: AsuraClient,
+    library_root,
+    limit: int | None = None,
+    should_stop: Callable[[], bool] | None = None,
+) -> dict:
     local_result = scan_library(conn, library_root)
     inventory = repository.get_inventory_map(conn)
-    series_list = client.crawl_catalog(limit=limit)
+    series_list = client.crawl_catalog(limit=limit, should_stop=should_stop)
     scanned = 0
     enqueued = 0
 
     for series_hint in series_list:
+        if should_stop and should_stop():
+            break
         result = scan_one_series(conn, client, series_hint, inventory)
         scanned += 1
         enqueued += result["enqueued"]
 
     scan_name = f"Limited scan ({limit})" if limit else "Full scan"
-    repository.log(conn, "info", f"{scan_name} complete: {scanned} series, {enqueued} downloads queued")
+    stopped = bool(should_stop and should_stop())
+    status = "stopped" if stopped else "complete"
+    repository.log(conn, "info", f"{scan_name} {status}: {scanned} series, {enqueued} downloads queued")
     return {
         "seriesScanned": scanned,
         "downloadsQueued": enqueued,
         "localBooks": local_result.get("books", 0),
         "localChapters": local_result.get("chapters", 0),
+        "stopped": stopped,
     }
 
 
@@ -35,6 +47,7 @@ def scan_limited_catalog_batch(
     library_root,
     batch_size: int,
     offset: int = 0,
+    should_stop: Callable[[], bool] | None = None,
 ) -> dict:
     local_result = scan_library(conn, library_root)
     inventory = repository.get_inventory_map(conn)
@@ -45,9 +58,16 @@ def scan_limited_catalog_batch(
     batch_manga_ids: list[int] = []
     total = 0
 
+    stopped = False
     while len(batch_manga_ids) < batch_size:
+        if should_stop and should_stop():
+            stopped = True
+            break
         page_size = min(100, max(24, batch_size * 2))
         result = client.search_series(limit=page_size, offset=current_offset, sort="latest", order="desc")
+        if should_stop and should_stop():
+            stopped = True
+            break
         items = result.get("items") or []
         total = int(result.get("total") or total or 0)
         if not items:
@@ -55,6 +75,9 @@ def scan_limited_catalog_batch(
         current_offset += len(items)
 
         for item in items:
+            if should_stop and should_stop():
+                stopped = True
+                break
             try:
                 hint = AsuraSeries(
                     slug=item["slug"],
@@ -74,13 +97,16 @@ def scan_limited_catalog_batch(
             except Exception as exc:
                 repository.log(conn, "error", f"Limited scan failed for {item.get('title', '?')}: {exc}")
 
+        if stopped:
+            break
         if current_offset >= total:
             break
 
+    status = "stopped" if stopped else "complete"
     repository.log(
         conn,
         "info",
-        f"Limited scan batch complete: {len(batch_manga_ids)}/{batch_size} books with downloads, "
+        f"Limited scan batch {status}: {len(batch_manga_ids)}/{batch_size} books with downloads, "
         f"{scanned} series scanned, {enqueued} downloads queued, next offset {current_offset}",
     )
     return {
@@ -91,7 +117,8 @@ def scan_limited_catalog_batch(
         "batchMangaIds": batch_manga_ids,
         "nextOffset": current_offset,
         "catalogTotal": total,
-        "exhausted": not batch_manga_ids or (total > 0 and current_offset >= total and len(batch_manga_ids) < batch_size),
+        "exhausted": not stopped and (not batch_manga_ids or (total > 0 and current_offset >= total and len(batch_manga_ids) < batch_size)),
+        "stopped": stopped,
     }
 
 

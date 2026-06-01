@@ -39,6 +39,8 @@ const emptySummary: Summary = {
   missingChapters: 0,
   lastScanAt: null,
   queuePaused: false,
+  limitedScanActive: false,
+  scanRunning: false,
   libraryRoot: "",
   komgaUrl: "",
   autoScanEveryDays: 0,
@@ -242,7 +244,7 @@ export function App() {
 
   async function deleteQueuedDownloads() {
     const ok = window.confirm(
-      "Remove all currently queued downloads? Running, completed, failed, and paused downloads are not removed.",
+      "Remove all waiting downloads? Running, completed, and failed downloads are not removed.",
     );
     if (!ok) return;
     await runAction("Remove queued downloads", api.deleteQueuedDownloads);
@@ -250,7 +252,7 @@ export function App() {
 
   async function deleteZeroPercentQueuedDownloads() {
     const ok = window.confirm(
-      "Remove queued downloads for books that are still at 0% and have not started? Running, completed, failed, and paused downloads are not removed.",
+      "Remove waiting downloads for books that are still at 0% and have not started? Running, completed, and failed downloads are not removed.",
     );
     if (!ok) return;
     await runAction(
@@ -291,19 +293,18 @@ export function App() {
     return true;
   });
   const queuedDownloadCount = progress.reduce(
-    (sum, item) => sum + item.queued,
+    (sum, item) => sum + item.queued + item.paused,
     0,
   );
   const zeroPercentQueuedCount = progress.reduce((sum, item) => {
     if (
-      item.queued > 0 &&
+      item.queued + item.paused > 0 &&
       item.percent === 0 &&
       item.running === 0 &&
       item.done === 0 &&
-      item.failed === 0 &&
-      item.paused === 0
+      item.failed === 0
     ) {
-      return sum + item.queued;
+      return sum + item.queued + item.paused;
     }
     return sum;
   }, 0);
@@ -421,6 +422,15 @@ export function App() {
               title="Scan the full Asura catalog, compare against your Komga books folder, and enqueue missing chapters."
             >
               Full scan
+            </button>
+            <button
+              className="secondary danger"
+              onClick={() => runAction("Stop scan", api.stopScan)}
+              disabled={loading || (!summary.scanRunning && !summary.limitedScanActive)}
+              title="Stop the active full scan or limited scan after its current network request finishes. Also disables limited scan continuation."
+            >
+              <X size={16} />
+              Stop scan
             </button>
             <button
               className="secondary"
@@ -844,7 +854,7 @@ export function App() {
               className="secondary danger"
               onClick={deleteQueuedDownloads}
               disabled={loading || queuedDownloadCount === 0}
-              title="Remove all queued download jobs. Running, completed, failed, and paused downloads stay untouched."
+              title="Remove all waiting download jobs. Running, completed, and failed downloads stay untouched."
             >
               <Trash2 size={15} />
               Clear queued
@@ -854,7 +864,7 @@ export function App() {
               className="secondary danger"
               onClick={deleteZeroPercentQueuedDownloads}
               disabled={loading || zeroPercentQueuedCount === 0}
-              title="Remove queued download jobs only for books still at 0% with no started download history."
+              title="Remove waiting download jobs only for books still at 0% with no started download history."
             >
               <Trash2 size={15} />
               Clear 0%
