@@ -29,6 +29,72 @@ def scan_full_catalog(conn: sqlite3.Connection, client: AsuraClient, library_roo
     }
 
 
+def scan_limited_catalog_batch(
+    conn: sqlite3.Connection,
+    client: AsuraClient,
+    library_root,
+    batch_size: int,
+    offset: int = 0,
+) -> dict:
+    local_result = scan_library(conn, library_root)
+    inventory = repository.get_inventory_map(conn)
+    batch_size = max(1, int(batch_size))
+    current_offset = max(0, int(offset))
+    scanned = 0
+    enqueued = 0
+    batch_manga_ids: list[int] = []
+    total = 0
+
+    while len(batch_manga_ids) < batch_size:
+        page_size = min(100, max(24, batch_size * 2))
+        result = client.search_series(limit=page_size, offset=current_offset, sort="latest", order="desc")
+        items = result.get("items") or []
+        total = int(result.get("total") or total or 0)
+        if not items:
+            break
+        current_offset += len(items)
+
+        for item in items:
+            try:
+                hint = AsuraSeries(
+                    slug=item["slug"],
+                    title=item["title"],
+                    url=item["url"],
+                    cover_url=item.get("cover_url"),
+                    status=item.get("status"),
+                    remote_chapter_count=int(item.get("chapter_count") or 0),
+                )
+                result_item = scan_one_series(conn, client, hint, inventory)
+                scanned += 1
+                enqueued += result_item["enqueued"]
+                if result_item["missingChapters"] > 0:
+                    batch_manga_ids.append(int(result_item["mangaId"]))
+                    if len(batch_manga_ids) >= batch_size:
+                        break
+            except Exception as exc:
+                repository.log(conn, "error", f"Limited scan failed for {item.get('title', '?')}: {exc}")
+
+        if current_offset >= total:
+            break
+
+    repository.log(
+        conn,
+        "info",
+        f"Limited scan batch complete: {len(batch_manga_ids)}/{batch_size} books with downloads, "
+        f"{scanned} series scanned, {enqueued} downloads queued, next offset {current_offset}",
+    )
+    return {
+        "seriesScanned": scanned,
+        "downloadsQueued": enqueued,
+        "localBooks": local_result.get("books", 0),
+        "localChapters": local_result.get("chapters", 0),
+        "batchMangaIds": batch_manga_ids,
+        "nextOffset": current_offset,
+        "catalogTotal": total,
+        "exhausted": not batch_manga_ids or (total > 0 and current_offset >= total and len(batch_manga_ids) < batch_size),
+    }
+
+
 def scan_specific(conn: sqlite3.Connection, client: AsuraClient, library_root, query: str, priority: int = 0) -> dict:
     scan_library(conn, library_root)
     inventory = repository.get_inventory_map(conn)
@@ -89,24 +155,17 @@ def scan_one_series(
 
 
 def scan_priority_books(conn: sqlite3.Connection, client: AsuraClient, library_root, search_kwargs: dict) -> dict:
-    """Fetch all pages of an Asura search and scan each book with priority=1."""
+    """Scan only the current Asura search page with priority=1."""
     scan_library(conn, library_root)
     inventory = repository.get_inventory_map(conn)
 
-    all_items: list[dict] = []
-    offset = 0
-    while True:
-        result = client.search_series(**{**search_kwargs, "limit": 100, "offset": offset})
-        items = result.get("items") or []
-        all_items.extend(items)
-        total = int(result.get("total") or 0)
-        if not items or offset + 100 >= total:
-            break
-        offset += 100
+    result = client.search_series(**search_kwargs)
+    items = result.get("items") or []
 
     scanned = 0
     enqueued = 0
-    for item in all_items:
+    manga_ids: list[int] = []
+    for item in items:
         try:
             hint = AsuraSeries(
                 slug=item["slug"],
@@ -119,8 +178,9 @@ def scan_priority_books(conn: sqlite3.Connection, client: AsuraClient, library_r
             result_item = scan_one_series(conn, client, hint, inventory, priority=1)
             scanned += 1
             enqueued += result_item["enqueued"]
+            manga_ids.append(int(result_item["mangaId"]))
         except Exception as exc:
             repository.log(conn, "error", f"Priority scan failed for {item.get('title', '?')}: {exc}")
 
-    repository.log(conn, "info", f"Priority scan complete: {scanned} series, {enqueued} downloads queued at priority=1")
-    return {"seriesScanned": scanned, "downloadsQueued": enqueued}
+    repository.log(conn, "info", f"Priority scan complete: {scanned} current-page series, {enqueued} downloads queued at priority=1")
+    return {"seriesScanned": scanned, "downloadsQueued": enqueued, "mangaIds": manga_ids}

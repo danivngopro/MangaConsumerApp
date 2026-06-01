@@ -47,6 +47,20 @@ def set_setting(conn: sqlite3.Connection, key: str, value: str) -> None:
     conn.commit()
 
 
+def get_json_setting(conn: sqlite3.Connection, key: str, default):
+    value = get_setting(conn, key, "")
+    if not value:
+        return default
+    try:
+        return json.loads(value)
+    except json.JSONDecodeError:
+        return default
+
+
+def set_json_setting(conn: sqlite3.Connection, key: str, value) -> None:
+    set_setting(conn, key, json.dumps(value))
+
+
 def upsert_inventory(
     conn: sqlite3.Connection,
     title: str,
@@ -190,14 +204,34 @@ def find_missing_chapters(conn: sqlite3.Connection, manga_id: int, local_keys: s
 def enqueue_download(conn: sqlite3.Connection, manga_id: int, chapter_id: int, priority: int = 0) -> None:
     existing = conn.execute(
         """
-        SELECT id, priority FROM jobs
-        WHERE type = 'download' AND chapter_id = ? AND status IN ('queued', 'running')
+        SELECT id, priority, status FROM jobs
+        WHERE type = 'download'
+          AND chapter_id = ?
+          AND status IN ('queued', 'running', 'paused', 'auto_paused', 'failed')
+        ORDER BY
+          CASE status
+            WHEN 'queued' THEN 0
+            WHEN 'running' THEN 1
+            WHEN 'auto_paused' THEN 2
+            WHEN 'paused' THEN 3
+            ELSE 4
+          END,
+          id ASC
+        LIMIT 1
         """,
         (chapter_id,),
     ).fetchone()
     if existing:
+        updates: list[str] = []
+        values: list[object] = []
         if priority > int(existing["priority"] or 0):
-            conn.execute("UPDATE jobs SET priority = ? WHERE id = ?", (priority, existing["id"]))
+            updates.append("priority = ?")
+            values.append(priority)
+        if priority > 0 and existing["status"] in {"paused", "auto_paused"}:
+            updates.append("status = 'queued'")
+        if updates:
+            values.append(existing["id"])
+            conn.execute(f"UPDATE jobs SET {', '.join(updates)} WHERE id = ?", values)
             conn.commit()
         return
     conn.execute(
@@ -300,6 +334,24 @@ def has_pending_download_jobs_for_manga(conn: sqlite3.Connection, manga_id: int)
     return int(row["count"]) > 0
 
 
+def has_blocking_download_jobs_for_manga_ids(conn: sqlite3.Connection, manga_ids: list[int]) -> bool:
+    ids = [int(manga_id) for manga_id in manga_ids if int(manga_id) > 0]
+    if not ids:
+        return False
+    placeholders = ",".join("?" for _ in ids)
+    row = conn.execute(
+        f"""
+        SELECT COUNT(*) AS count
+        FROM jobs
+        WHERE type = 'download'
+          AND manga_id IN ({placeholders})
+          AND status IN ('queued', 'running', 'failed', 'paused', 'auto_paused')
+        """,
+        ids,
+    ).fetchone()
+    return int(row["count"]) > 0
+
+
 def download_now_atomic(conn: sqlite3.Connection, manga_id: int) -> tuple[int, int]:
     """Atomically pause all other queued jobs and elevate this manga to priority=2.
     Returns (paused_count, upgraded_count). Done under a single lock to avoid
@@ -346,6 +398,32 @@ def pause_downloads_for_manga(conn: sqlite3.Connection, manga_id: int) -> int:
             """,
             (manga_id,),
         )
+        conn.commit()
+        return cursor.rowcount
+
+
+def pause_downloads_except_manga_ids(conn: sqlite3.Connection, manga_ids: list[int]) -> int:
+    ids = [int(manga_id) for manga_id in manga_ids if int(manga_id) > 0]
+    with DB_LOCK:
+        if not ids:
+            cursor = conn.execute(
+                """
+                UPDATE jobs
+                SET status = 'paused'
+                WHERE type = 'download' AND status IN ('queued', 'auto_paused')
+                """
+            )
+        else:
+            placeholders = ",".join("?" for _ in ids)
+            cursor = conn.execute(
+                f"""
+                UPDATE jobs
+                SET status = 'paused'
+                WHERE type = 'download' AND status IN ('queued', 'auto_paused')
+                  AND manga_id NOT IN ({placeholders})
+                """,
+                ids,
+            )
         conn.commit()
         return cursor.rowcount
 

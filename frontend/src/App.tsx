@@ -413,7 +413,7 @@ export function App() {
             </button>
           </div>
           <div className="limited-scan">
-            <label title="Scan only the first N books from Asura Browse. Useful for testing without queueing the entire catalog.">
+            <label title="Keep only N books with missing episodes active at a time. The next N are scanned only after the current batch fully downloads.">
               Scan first
               <input
                 type="number"
@@ -432,7 +432,7 @@ export function App() {
                 )
               }
               disabled={loading}
-              title="Scan only this many Asura books, then enqueue missing chapters for those books."
+              title="Find this many Asura books with missing episodes, download them fully, then continue with the next batch."
             >
               Limited scan
             </button>
@@ -720,12 +720,12 @@ export function App() {
                   }
                   onClick={() =>
                     runAction("Priority scan", () =>
-                      api.priorityScan(browsePayload()),
+                      api.priorityScan(browsePayload(browseOffset)),
                     )
                   }
-                  title="Scan all books matching the current filters (all pages) and place their missing chapters at the front of the download queue. Runs in background."
+                  title="Scan only the currently loaded Asura result page and place its missing chapters at the front of the download queue. Runs in background."
                 >
-                  Priority scan all
+                  Priority scan page
                 </button>
                 <button
                   className="secondary"

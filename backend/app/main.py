@@ -282,7 +282,10 @@ def start_specific_priority_scan(payload: SpecificScanRequest, _user: dict = Dep
 
     def worker() -> None:
         try:
-            scan_specific(conn, asura_client, settings.library_root, query, priority=2)
+            result = scan_specific(conn, asura_client, settings.library_root, query, priority=2)
+            repository.set_setting(conn, "limited_scan_active", "0")
+            paused = repository.pause_downloads_except_manga_ids(conn, [int(result["mangaId"])])
+            repository.log(conn, "info", f"Asura search add is exclusive: paused {paused} other queued downloads")
         except Exception as exc:
             repository.log(conn, "error", f"Priority-add scan failed for {query}: {exc}")
 
@@ -418,11 +421,17 @@ def start_priority_scan(payload: BrowseSearchRequest, _user: dict = Depends(auth
         "order": payload.order,
         "min_chapters": max(0, int(payload.minChapters)),
         "max_chapters": max(0, int(payload.maxChapters)),
+        "limit": max(1, min(100, int(payload.limit))),
+        "offset": max(0, int(payload.offset)),
     }
 
     def worker() -> None:
         try:
-            scan_priority_books(conn, asura_client, settings.library_root, search_kwargs)
+            result = scan_priority_books(conn, asura_client, settings.library_root, search_kwargs)
+            repository.set_setting(conn, "limited_scan_active", "0")
+            manga_ids = [int(manga_id) for manga_id in result.get("mangaIds", [])]
+            paused = repository.pause_downloads_except_manga_ids(conn, manga_ids) if manga_ids else 0
+            repository.log(conn, "info", f"Asura search page add is exclusive: paused {paused} other queued downloads")
         except Exception as exc:
             repository.log(conn, "error", f"Priority scan failed: {exc}")
 
