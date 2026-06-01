@@ -110,18 +110,18 @@ class ScanScheduler:
     def _prepare_limited_scan(self, active_threshold: int) -> dict:
         active_count = repository.active_download_job_count(self.conn)
         if active_count >= active_threshold:
-            self._cancel_scan.set()
-            repository.stop_limited_scan_state(self.conn)
+            self._cancel_scan.clear()
+            repository.start_limited_scan_state(self.conn, active_threshold)
             repository.log(
                 self.conn,
                 "info",
-                f"Limited scan top-up not started; active chapters already {active_count}/{active_threshold}",
+                f"Limited scan top-up armed; active chapters already {active_count}/{active_threshold}",
             )
             return {
                 "activeChapters": active_count,
                 "threshold": active_threshold,
-                "started": False,
-                "reason": "active chapters already meet or exceed threshold",
+                "started": True,
+                "reason": "top-up armed; waiting for active chapters to drop below threshold",
             }
         if self.scan_running:
             self._cancel_scan.set()
@@ -253,11 +253,10 @@ class ScanScheduler:
             threshold = int(repository.get_setting(self.conn, "limited_scan_active_threshold", "300") or "300")
             active_count = repository.active_download_job_count(self.conn)
             if active_count >= threshold:
-                repository.stop_limited_scan_state(self.conn)
                 repository.log(
                     self.conn,
                     "info",
-                    f"Limited scan top-up complete; active chapters {active_count}/{threshold}",
+                    f"Limited scan top-up idle; active chapters {active_count}/{threshold}",
                 )
                 return last_result
             result = self.run_next_limited_scan_batch()
@@ -268,11 +267,10 @@ class ScanScheduler:
                 return last_result
             active_count = repository.active_download_job_count(self.conn)
             if active_count >= threshold:
-                repository.stop_limited_scan_state(self.conn)
                 repository.log(
                     self.conn,
                     "info",
-                    f"Limited scan top-up complete after adding book; active chapters {active_count}/{threshold}",
+                    f"Limited scan top-up filled after adding book; active chapters {active_count}/{threshold}",
                 )
                 return last_result
         return last_result
