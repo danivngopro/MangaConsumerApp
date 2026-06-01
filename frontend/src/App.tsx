@@ -586,7 +586,6 @@ export function App() {
                 active={modalBookId === item.manga_id}
                 loading={loading}
                 onOpen={() => openBook(item.manga_id)}
-                onDownloadNow={() => runAction(`Download now: ${item.manga_title}`, () => api.downloadNow(item.manga_id))}
               />
             ))}
           </div>
@@ -643,17 +642,14 @@ function ProgressRow({
   active,
   loading,
   onOpen,
-  onDownloadNow,
 }: {
   item: DownloadProgress;
   active: boolean;
   loading: boolean;
   onOpen: () => void;
-  onDownloadNow: () => void;
 }) {
   const episodeTotal = item.remote_chapter_count || item.total || 0;
   const downloaded = item.available_count ?? item.done;
-  const hasWork = item.queued > 0 || item.paused > 0;
 
   return (
     <article className={`progress-row${active ? " active" : ""}`}>
@@ -679,16 +675,6 @@ function ProgressRow({
         </div>
         <ChevronDown className="progress-chevron" size={18} />
       </button>
-      {hasWork && (
-        <button
-          className="download-now-btn"
-          onClick={(e) => { e.stopPropagation(); onDownloadNow(); }}
-          disabled={loading}
-          title="Pause all other downloads and download this book first."
-        >
-          ↑ Download now
-        </button>
-      )}
     </article>
   );
 }

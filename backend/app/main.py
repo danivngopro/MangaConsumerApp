@@ -275,20 +275,16 @@ def start_specific_scan(payload: SpecificScanRequest, _user: dict = Depends(auth
 
 @app.post("/api/scan/specific-priority")
 def start_specific_priority_scan(payload: SpecificScanRequest, _user: dict = Depends(authenticated_user)) -> dict:
-    """Scan a single book at priority=2. Auto-pauses other queued jobs first."""
+    """Scan a single book at priority=2. Other books keep running but this one is downloaded first."""
     query = payload.query.strip()
     if not query:
         raise HTTPException(status_code=400, detail="query is required")
-
-    paused = repository.auto_pause_queued_jobs(conn)
-    repository.log(conn, "info", f"Priority add: auto-paused {paused} queued jobs for '{query}'")
 
     def worker() -> None:
         try:
             scan_specific(conn, asura_client, settings.library_root, query, priority=2)
         except Exception as exc:
             repository.log(conn, "error", f"Priority-add scan failed for {query}: {exc}")
-            repository.maybe_resume_auto_paused(conn)
 
     threading.Thread(target=worker, name="priority-add-scan", daemon=True).start()
     return {"started": True, "query": query}
@@ -296,13 +292,22 @@ def start_specific_priority_scan(payload: SpecificScanRequest, _user: dict = Dep
 
 @app.post("/api/books/{manga_id}/download-now")
 def download_now(manga_id: int, _user: dict = Depends(authenticated_user)) -> dict:
-    """Pause other books and download this one next."""
-    row = conn.execute("SELECT title FROM manga WHERE id = ?", (manga_id,)).fetchone()
+    """Atomically pause other books' queued downloads and elevate this book to priority=2."""
+    row = conn.execute("SELECT title, url FROM manga WHERE id = ?", (manga_id,)).fetchone()
     if row is None:
         raise HTTPException(status_code=404, detail="manga not found")
-    paused = repository.auto_pause_other_queued_jobs(conn, manga_id)
-    upgraded = repository.set_manga_download_priority(conn, manga_id, priority=2)
-    repository.log(conn, "info", f"Download now: {row['title']} — upgraded {upgraded} jobs to priority=2, paused {paused} others")
+    paused, upgraded = repository.download_now_atomic(conn, manga_id)
+    repository.log(conn, "info", f"Download now: {row['title']} — {upgraded} jobs → priority=2, {paused} others paused")
+    if upgraded == 0:
+        # No queued jobs exist yet — trigger a fresh scan to enqueue missing chapters at priority=2
+        query = row["url"] or row["title"]
+        def scan_worker() -> None:
+            try:
+                scan_specific(conn, asura_client, settings.library_root, query, priority=2)
+            except Exception as exc:
+                repository.log(conn, "error", f"Download now scan failed for {row['title']}: {exc}")
+                repository.maybe_resume_auto_paused(conn)
+        threading.Thread(target=scan_worker, name="download-now-scan", daemon=True).start()
     return {"paused": paused, "upgraded": upgraded, "mangaId": manga_id}
 
 
