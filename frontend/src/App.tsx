@@ -165,6 +165,14 @@ export function App() {
           </button>
           <button
             className="secondary"
+            onClick={() => runAction("Retry failed downloads", api.retryFailedDownloads)}
+            disabled={loading || summary.failedJobs === 0}
+            title="Requeue failed chapter downloads and reset their attempt count."
+          >
+            Retry failed
+          </button>
+          <button
+            className="secondary"
             onClick={() => runAction("Logout", async () => {
               await api.logout();
               setAuthStatus(await api.authStatus());
@@ -429,6 +437,7 @@ function BookDetailPanel({ book, onClose, onRefresh }: { book: BookDetail; onClo
           </div>
           <div className="button-row">
             <button className="secondary" onClick={onRefresh}>Refresh</button>
+            <button className="secondary" onClick={() => api.retryFailedBookDownloads(book.id).then(onRefresh)}>Retry failed</button>
             <button className="secondary" onClick={onClose}>Close</button>
           </div>
         </header>

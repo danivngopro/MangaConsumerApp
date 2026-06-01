@@ -142,6 +142,12 @@ export const api = {
     request<{ resumed: number; mangaId: number }>(`/api/books/${mangaId}/downloads/resume`, {
       method: "POST",
     }),
+  retryFailedDownloads: () =>
+    request<{ requeued: number }>("/api/jobs/retry-failed", { method: "POST" }),
+  retryFailedBookDownloads: (mangaId: number) =>
+    request<{ requeued: number; mangaId: number }>(`/api/books/${mangaId}/downloads/retry-failed`, {
+      method: "POST",
+    }),
   quickScanBook: (mangaId: number) =>
     request<{
       scanned: boolean;

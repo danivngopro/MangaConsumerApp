@@ -86,6 +86,9 @@ def authenticated_user(
 
 @app.on_event("startup")
 def on_startup() -> None:
+    interrupted = repository.requeue_interrupted_downloads(conn)
+    if interrupted:
+        repository.log(conn, "info", f"Requeued {interrupted} interrupted downloads after startup")
     download_queue.start()
     scan_scheduler.start()
     repository.log(conn, "info", f"Backend started with library root: {settings.library_root}")
@@ -249,6 +252,23 @@ def resume_book_downloads(manga_id: int, _user: dict = Depends(authenticated_use
     count = repository.resume_downloads_for_manga(conn, manga_id)
     repository.log(conn, "info", f"Resumed {count} paused downloads for {row['title']}")
     return {"resumed": count, "mangaId": manga_id}
+
+
+@app.post("/api/jobs/retry-failed")
+def retry_failed_jobs(_user: dict = Depends(authenticated_user)) -> dict:
+    count = repository.retry_failed_downloads(conn)
+    repository.log(conn, "info", f"Requeued {count} failed download jobs")
+    return {"requeued": count}
+
+
+@app.post("/api/books/{manga_id}/downloads/retry-failed")
+def retry_failed_book_downloads(manga_id: int, _user: dict = Depends(authenticated_user)) -> dict:
+    row = conn.execute("SELECT title FROM manga WHERE id = ?", (manga_id,)).fetchone()
+    if row is None:
+        raise HTTPException(status_code=404, detail="manga not found")
+    count = repository.retry_failed_downloads(conn, manga_id)
+    repository.log(conn, "info", f"Requeued {count} failed downloads for {row['title']}")
+    return {"requeued": count, "mangaId": manga_id}
 
 
 @app.post("/api/komga/books/{manga_id}/quick-scan")

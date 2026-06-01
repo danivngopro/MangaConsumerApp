@@ -316,6 +316,44 @@ def resume_downloads_for_manga(conn: sqlite3.Connection, manga_id: int) -> int:
         return cursor.rowcount
 
 
+def retry_failed_downloads(conn: sqlite3.Connection, manga_id: int | None = None) -> int:
+    with DB_LOCK:
+        if manga_id is None:
+            cursor = conn.execute(
+                """
+                UPDATE jobs
+                SET status = 'queued', attempts = 0, error = NULL, started_at = NULL, finished_at = NULL
+                WHERE type = 'download' AND status = 'failed'
+                """
+            )
+        else:
+            cursor = conn.execute(
+                """
+                UPDATE jobs
+                SET status = 'queued', attempts = 0, error = NULL, started_at = NULL, finished_at = NULL
+                WHERE type = 'download' AND status = 'failed' AND manga_id = ?
+                """,
+                (manga_id,),
+            )
+        conn.commit()
+        return cursor.rowcount
+
+
+def requeue_interrupted_downloads(conn: sqlite3.Connection) -> int:
+    with DB_LOCK:
+        cursor = conn.execute(
+            """
+            UPDATE jobs
+            SET status = 'queued',
+                error = 'Requeued after backend restart',
+                started_at = NULL
+            WHERE type = 'download' AND status = 'running'
+            """
+        )
+        conn.commit()
+        return cursor.rowcount
+
+
 def manga_has_paused_jobs(conn: sqlite3.Connection, manga_id: int) -> bool:
     row = conn.execute(
         "SELECT COUNT(*) AS count FROM jobs WHERE type = 'download' AND manga_id = ? AND status = 'paused'",

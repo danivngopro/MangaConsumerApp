@@ -7,6 +7,7 @@ import sqlite3
 import time
 import zipfile
 from pathlib import Path
+from shutil import which
 from urllib.parse import urljoin
 
 import requests
@@ -28,7 +29,11 @@ def setup_driver() -> webdriver.Chrome:
     options.add_argument("--disable-dev-shm-usage")
     options.add_argument("--window-size=1400,2200")
     options.add_argument(f"--user-agent={USER_AGENT}")
-    service = Service(ChromeDriverManager().install())
+    chromium_binary = which("chromium") or which("chromium-browser") or which("google-chrome")
+    if chromium_binary:
+        options.binary_location = chromium_binary
+    chromedriver_binary = which("chromedriver")
+    service = Service(chromedriver_binary or ChromeDriverManager().install())
     driver = webdriver.Chrome(service=service, options=options)
     driver.set_page_load_timeout(90)
     return driver
