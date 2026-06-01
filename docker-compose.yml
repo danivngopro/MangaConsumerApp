@@ -3,7 +3,7 @@ services:
     build: .
     container_name: manga-recoverer
     ports:
-      - "8816:8000"
+      - "8816:8816"
     environment:
       APP_DATA_DIR: /data
       MANGA_LIBRARY_ROOT: /books
