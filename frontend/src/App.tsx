@@ -17,7 +17,7 @@ import {
   X,
   Zap,
 } from "lucide-react";
-import { api, AuthStatus, BookDetail, DownloadProgress, Summary } from "./api";
+import { api, AuthStatus, BookDetail, BrowseFilters, BrowseResult, DownloadProgress, Summary } from "./api";
 
 const emptySummary: Summary = {
   knownManga: 0,
@@ -42,6 +42,22 @@ export function App() {
   const [progress, setProgress] = useState<DownloadProgress[]>([]);
   const [details, setDetails] = useState<Record<number, BookDetail>>({});
   const [expandedBookId, setExpandedBookId] = useState<number | null>(null);
+  const [browseFilters, setBrowseFilters] = useState<BrowseFilters | null>(null);
+  const [browseResults, setBrowseResults] = useState<BrowseResult[]>([]);
+  const [browseTotal, setBrowseTotal] = useState(0);
+  const [browseOffset, setBrowseOffset] = useState(0);
+  const [browseLoading, setBrowseLoading] = useState(false);
+  const [browseSearch, setBrowseSearch] = useState("");
+  const [browseGenres, setBrowseGenres] = useState<string[]>([]);
+  const [browseStatus, setBrowseStatus] = useState("all");
+  const [browseType, setBrowseType] = useState("all");
+  const [browseSort, setBrowseSort] = useState("latest");
+  const [browseOrder, setBrowseOrder] = useState("desc");
+  const [browseAuthor, setBrowseAuthor] = useState("");
+  const [browseArtist, setBrowseArtist] = useState("");
+  const [browseMinChapters, setBrowseMinChapters] = useState(0);
+  const [hideExisting, setHideExisting] = useState(true);
+  const [hideStringText, setHideStringText] = useState("");
   const [query, setQuery] = useState("");
   const [scanLimit, setScanLimit] = useState(10);
   const [intervalDays, setIntervalDays] = useState(0);
@@ -60,6 +76,9 @@ export function App() {
     setProgress(nextProgress);
     setIntervalDays(nextSummary.autoScanEveryDays);
     setDownloadConcurrency(nextSummary.downloadConcurrency);
+    if (!browseFilters) {
+      setBrowseFilters(await api.asuraFilters());
+    }
     if (expandedBookId) {
       const detail = await api.bookDetail(expandedBookId);
       setDetails((current) => ({ ...current, [expandedBookId]: detail }));
@@ -72,7 +91,7 @@ export function App() {
       refresh().catch((error) => setStatus(error.message));
     }, 5000);
     return () => window.clearInterval(handle);
-  }, [expandedBookId]);
+  }, [expandedBookId, browseFilters]);
 
   async function runAction(label: string, action: () => Promise<unknown>) {
     setLoading(true);
@@ -107,6 +126,53 @@ export function App() {
     if (!ok) return;
     await runAction("Komga quick scan all", api.quickScanAll);
   }
+
+  function browsePayload(offset = 0) {
+    return {
+      search: browseSearch.trim(),
+      genres: browseGenres,
+      author: browseAuthor.trim(),
+      artist: browseArtist.trim(),
+      status: browseStatus,
+      type: browseType,
+      sort: browseSort,
+      order: browseOrder,
+      minChapters: browseMinChapters,
+      limit: 24,
+      offset,
+    };
+  }
+
+  async function submitBrowseSearch(event?: FormEvent<HTMLFormElement>, offset = 0) {
+    event?.preventDefault();
+    setBrowseLoading(true);
+    setStatus("Searching Asura");
+    try {
+      const result = await api.asuraSearch(browsePayload(offset));
+      setBrowseResults(result.items);
+      setBrowseTotal(result.total);
+      setBrowseOffset(result.offset);
+      setStatus(`Found ${result.total.toLocaleString()} Asura books`);
+    } catch (error) {
+      setStatus(error instanceof Error ? error.message : String(error));
+    } finally {
+      setBrowseLoading(false);
+    }
+  }
+
+  function toggleGenre(slug: string) {
+    setBrowseGenres((current) => current.includes(slug) ? current.filter((item) => item !== slug) : [...current, slug]);
+  }
+
+  const hiddenStrings = hideStringText
+    .split(/\r?\n|,/)
+    .map((value) => value.trim().toLowerCase())
+    .filter(Boolean);
+  const visibleBrowseResults = browseResults.filter((item) => {
+    if (hideExisting && item.is_existing) return false;
+    if (hiddenStrings.some((part) => item.title.toLowerCase().includes(part))) return false;
+    return true;
+  });
 
   async function toggleBook(bookId: number) {
     if (expandedBookId === bookId) {
@@ -306,6 +372,101 @@ export function App() {
         </div>
       </section>
 
+      <section className="panel search-panel">
+        <div className="panel-title">
+          <Search size={18} />
+          Asura Search
+        </div>
+        <form className="browse-form" onSubmit={(event) => submitBrowseSearch(event, 0)}>
+          <input
+            value={browseSearch}
+            onChange={(event) => setBrowseSearch(event.target.value)}
+            placeholder="Search Asura titles"
+            title="Search Asura by title."
+          />
+          <select value={browseStatus} onChange={(event) => setBrowseStatus(event.target.value)} title="Filter by Asura status.">
+            {(browseFilters?.statuses ?? ["all", "ongoing", "completed", "hiatus", "dropped", "axed"]).map((status) => (
+              <option key={status} value={status}>{status}</option>
+            ))}
+          </select>
+          <select value={browseType} onChange={(event) => setBrowseType(event.target.value)} title="Filter by series type.">
+            {(browseFilters?.types ?? ["all", "manhwa", "manhua", "manga"]).map((type) => (
+              <option key={type} value={type}>{type}</option>
+            ))}
+          </select>
+          <select value={browseSort} onChange={(event) => setBrowseSort(event.target.value)} title="Sort Asura results.">
+            {(browseFilters?.sorts ?? ["latest", "popular", "rating", "title", "chapters"]).map((sort) => (
+              <option key={sort} value={sort}>{sort}</option>
+            ))}
+          </select>
+          <select value={browseOrder} onChange={(event) => setBrowseOrder(event.target.value)} title="Sort direction.">
+            <option value="desc">desc</option>
+            <option value="asc">asc</option>
+          </select>
+          <input
+            type="number"
+            min={0}
+            value={browseMinChapters}
+            onChange={(event) => setBrowseMinChapters(Number(event.target.value))}
+            placeholder="Min chapters"
+            title="Minimum chapter count."
+          />
+          <input value={browseAuthor} onChange={(event) => setBrowseAuthor(event.target.value)} placeholder="Author" title="Filter by author." />
+          <input value={browseArtist} onChange={(event) => setBrowseArtist(event.target.value)} placeholder="Artist" title="Filter by artist." />
+          <button className="primary" disabled={browseLoading} title="Search Asura using the selected filters.">
+            Search
+          </button>
+        </form>
+
+        <div className="filter-options">
+          <label title="Hide books already found in your local Komga folder.">
+            <input type="checkbox" checked={hideExisting} onChange={(event) => setHideExisting(event.target.checked)} />
+            Hide existing books
+          </label>
+          <label className="hide-strings" title="Comma or newline separated strings. Any matching title is hidden from the results.">
+            Hide titles containing
+            <textarea value={hideStringText} onChange={(event) => setHideStringText(event.target.value)} placeholder="academy, regression, necromancer" />
+          </label>
+        </div>
+
+        <div className="genre-strip">
+          {(browseFilters?.genres ?? []).map((genre) => (
+            <button
+              key={genre.slug}
+              type="button"
+              className={browseGenres.includes(genre.slug) ? "chip selected" : "chip"}
+              onClick={() => toggleGenre(genre.slug)}
+              title={`Toggle ${genre.name} genre filter.`}
+            >
+              {genre.name}
+            </button>
+          ))}
+        </div>
+
+        <div className="search-results-header">
+          <span>
+            Showing {visibleBrowseResults.length} of {browseResults.length} loaded results
+            {browseTotal ? `, ${browseTotal.toLocaleString()} total from Asura` : ""}
+          </span>
+          <div className="button-row">
+            <button className="secondary" disabled={browseLoading || browseOffset === 0} onClick={() => submitBrowseSearch(undefined, Math.max(0, browseOffset - 24))} title="Load previous Asura result page.">Previous</button>
+            <button className="secondary" disabled={browseLoading || browseOffset + 24 >= browseTotal} onClick={() => submitBrowseSearch(undefined, browseOffset + 24)} title="Load next Asura result page.">Next</button>
+          </div>
+        </div>
+
+        <div className="browse-results">
+          {visibleBrowseResults.map((item) => (
+            <BrowseResultRow
+              key={item.id}
+              item={item}
+              loading={loading || browseLoading}
+              onAdd={() => runAction(`Add book: ${item.title}`, () => api.specificScan(item.url))}
+            />
+          ))}
+          {!visibleBrowseResults.length && <p className="empty">No visible search results yet.</p>}
+        </div>
+      </section>
+
       <section className="panel progress-panel">
         <div className="panel-title">
           <Info size={18} />
@@ -326,6 +487,7 @@ export function App() {
                 onPause={() => pauseOrResumeBook(item, details[item.manga_id])}
                 onQuickScan={() => runAction(`Fast Komga scan: ${item.manga_title}`, () => api.quickScanBook(item.manga_id))}
                 onImport={() => runAction(`Komga import: ${item.manga_title}`, () => api.importBook(item.manga_id))}
+                onRetryFailed={() => runAction(`Retry failed: ${item.manga_title}`, () => api.retryFailedBookDownloads(item.manga_id))}
                 onSpecificScan={() => runAction(`Quick scan: ${item.manga_title}`, () => api.specificScan(item.url || item.manga_title))}
               />
             ))}
@@ -349,6 +511,7 @@ function ProgressRow({
   onPause,
   onQuickScan,
   onImport,
+  onRetryFailed,
   onSpecificScan,
 }: {
   item: DownloadProgress;
@@ -361,6 +524,7 @@ function ProgressRow({
   onPause: () => void;
   onQuickScan: () => void;
   onImport: () => void;
+  onRetryFailed: () => void;
   onSpecificScan: () => void;
 }) {
   const paused = Boolean(detail?.paused_downloads || item.paused > 0);
@@ -401,11 +565,16 @@ function ProgressRow({
             <IconButton icon={<X size={16} />} label="Close" title="Close this book dropdown." onClick={onClose} disabled={loading} />
             <IconButton icon={paused ? <Play size={16} /> : <Pause size={16} />} label={paused ? "Resume" : "Pause"} title="Pause or resume queued downloads for this book. Running chapters finish first." onClick={onPause} disabled={loading} />
             <IconButton icon={<Search size={16} />} label="Quick scan" title="Scan this manga on Asura and enqueue any newly missing chapters." onClick={onSpecificScan} disabled={loading} />
+            <IconButton icon={<RefreshCw size={16} />} label="Retry failed" title="Requeue failed chapter downloads for this book." onClick={onRetryFailed} disabled={loading || item.failed === 0} />
             <IconButton icon={<UploadCloud size={16} />} label="Import" title="Create or find this book's Komga library without forcing a scan." onClick={onImport} disabled={loading} />
             <IconButton icon={<Zap size={16} />} label="Fast scan" title="Run Komga quick scan for this book with deep=false." onClick={onQuickScan} disabled={loading} />
           </div>
 
           <div className="episode-summary">
+            <DetailStat label="Status" value={detail?.status ?? "unknown"} />
+            <DetailStat label="Local" value={`${detail?.local_chapter_count ?? item.existing_downloaded_count} episodes`} />
+            <DetailStat label="Asura" value={`${detail?.remote_chapter_count ?? item.remote_chapter_count} episodes`} />
+            <DetailStat label="Missing" value={`${detail?.missing_count ?? item.missing_count} episodes`} />
             <DetailStat label="Existing on server" value={`${detail?.existing_downloaded_count ?? item.existing_downloaded_count} episodes`} />
             <DetailStat label="Newly downloaded" value={`${detail?.newly_downloaded_count ?? item.newly_downloaded_count} episodes`} />
             <DetailStat label="Storage path" value={detail?.local_folder ?? item.local_folder ?? "Not created yet"} />
@@ -435,6 +604,28 @@ function ProgressRow({
         </div>
       )}
     </article>
+  );
+}
+
+function BrowseResultRow({ item, loading, onAdd }: { item: BrowseResult; loading: boolean; onAdd: () => void }) {
+  return (
+    <div className="browse-result-row">
+      {item.cover_url ? <img src={item.cover_url} alt="" loading="lazy" /> : <div className="cover-placeholder"><BookOpen size={20} /></div>}
+      <div>
+        <a href={item.url} target="_blank" rel="noreferrer">{item.title}</a>
+        <span>{[item.status, item.type, `${item.chapter_count} chapters`].filter(Boolean).join(" · ")}</span>
+        <small>{item.genres.map((genre) => genre.name).join(", ") || "No genres listed"}</small>
+        {item.local_folder && <small>{item.local_folder}</small>}
+      </div>
+      <div className="browse-counts">
+        <DetailStat label="Local" value={`${item.local_chapter_count}`} />
+        <DetailStat label="Asura" value={`${item.chapter_count}`} />
+        <DetailStat label="Missing" value={`${item.missing_count}`} />
+      </div>
+      <button className="primary" onClick={onAdd} disabled={loading} title="Add this book by scanning it and queueing missing chapters.">
+        Add
+      </button>
+    </div>
   );
 }
 

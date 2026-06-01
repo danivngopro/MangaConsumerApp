@@ -6,7 +6,7 @@ from pathlib import Path
 from fastapi import Cookie, Depends, FastAPI, HTTPException, Response
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
 from . import auth
 from . import repository
@@ -18,6 +18,7 @@ from .library import scan_library
 from .queue import DownloadQueue
 from .scanner import scan_specific
 from .scheduler import ScanScheduler
+from .utils import normalize_title
 
 
 class SpecificScanRequest(BaseModel):
@@ -31,6 +32,20 @@ class FullScanRequest(BaseModel):
 class SettingsRequest(BaseModel):
     autoScanEveryDays: int
     downloadConcurrency: int
+
+
+class BrowseSearchRequest(BaseModel):
+    search: str = ""
+    genres: list[str] = Field(default_factory=list)
+    author: str = ""
+    artist: str = ""
+    status: str = "all"
+    type: str = "all"
+    sort: str = "latest"
+    order: str = "desc"
+    minChapters: int = 0
+    limit: int = 24
+    offset: int = 0
 
 
 settings = load_settings()
@@ -166,6 +181,40 @@ def jobs(_user: dict = Depends(authenticated_user)) -> list[dict]:
 @app.get("/api/progress")
 def progress(_user: dict = Depends(authenticated_user)) -> list[dict]:
     return repository.download_progress(conn)
+
+
+@app.get("/api/asura/filters")
+def asura_filters(_user: dict = Depends(authenticated_user)) -> dict:
+    return asura_client.browse_filters()
+
+
+@app.post("/api/asura/search")
+def asura_search(payload: BrowseSearchRequest, _user: dict = Depends(authenticated_user)) -> dict:
+    result = asura_client.search_series(
+        search=payload.search.strip(),
+        genres=",".join(payload.genres),
+        author=payload.author.strip(),
+        artist=payload.artist.strip(),
+        status=payload.status,
+        series_type=payload.type,
+        sort=payload.sort,
+        order=payload.order,
+        min_chapters=max(0, int(payload.minChapters)),
+        limit=max(1, min(100, int(payload.limit))),
+        offset=max(0, int(payload.offset)),
+    )
+    inventory = repository.get_inventory_map(conn)
+    tracked = {row["normalized_title"]: dict(row) for row in conn.execute("SELECT * FROM manga").fetchall()}
+    for item in result["items"]:
+        normalized = normalize_title(item["title"])
+        local = inventory.get(normalized)
+        tracked_item = tracked.get(normalized)
+        item["is_existing"] = bool(local)
+        item["is_tracked"] = bool(tracked_item)
+        item["local_chapter_count"] = int(local["chapter_count"]) if local else (int(tracked_item["local_chapter_count"]) if tracked_item else 0)
+        item["missing_count"] = max(0, int(item["chapter_count"] or 0) - int(item["local_chapter_count"] or 0))
+        item["local_folder"] = local["folder_path"] if local else (tracked_item["local_folder"] if tracked_item else None)
+    return result
 
 
 @app.get("/api/settings")

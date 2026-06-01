@@ -4,6 +4,7 @@ import html
 import re
 import time
 from dataclasses import dataclass
+from typing import Any
 from urllib.parse import urljoin, urlparse
 
 import requests
@@ -39,9 +40,15 @@ class AsuraChapter:
 class AsuraClient:
     def __init__(self, base_url: str, request_delay_seconds: float = 1.0) -> None:
         self.base_url = base_url.rstrip("/")
+        self.api_base_url = "https://api.asurascans.com/api"
         self.request_delay_seconds = request_delay_seconds
         self.session = requests.Session()
-        self.session.headers.update({"User-Agent": USER_AGENT, "Accept": "text/html,application/xhtml+xml"})
+        self.session.headers.update({
+            "User-Agent": USER_AGENT,
+            "Accept": "text/html,application/xhtml+xml,application/json",
+            "Origin": self.base_url,
+            "Referer": f"{self.base_url}/browse",
+        })
 
     def _get(self, path_or_url: str) -> str:
         url = path_or_url if path_or_url.startswith("http") else urljoin(self.base_url, path_or_url)
@@ -50,6 +57,91 @@ class AsuraClient:
         if self.request_delay_seconds:
             time.sleep(self.request_delay_seconds)
         return response.text
+
+    def _api_get(self, path: str, params: dict[str, Any] | None = None) -> dict:
+        response = self.session.get(f"{self.api_base_url}{path}", params=params or {}, timeout=45)
+        response.raise_for_status()
+        if self.request_delay_seconds:
+            time.sleep(self.request_delay_seconds)
+        return response.json()
+
+    def browse_filters(self) -> dict:
+        genres_response = self._api_get("/genres")
+        creators_response = self._api_get("/creators")
+        creators = creators_response.get("data") or creators_response
+        return {
+            "genres": genres_response.get("data") or genres_response,
+            "authors": creators.get("authors", []),
+            "artists": creators.get("artists", []),
+            "statuses": ["all", "ongoing", "completed", "hiatus", "dropped", "axed"],
+            "types": ["all", "manhwa", "manhua", "manga"],
+            "sorts": ["latest", "popular", "rating", "title", "chapters", "created_at"],
+        }
+
+    def search_series(
+        self,
+        search: str = "",
+        genres: str = "",
+        author: str = "",
+        artist: str = "",
+        status: str = "all",
+        series_type: str = "all",
+        sort: str = "latest",
+        order: str = "desc",
+        min_chapters: int = 0,
+        limit: int = 24,
+        offset: int = 0,
+    ) -> dict:
+        params: dict[str, Any] = {
+            "sort": sort or "latest",
+            "order": order or "desc",
+            "limit": max(1, min(100, int(limit))),
+            "offset": max(0, int(offset)),
+        }
+        if search:
+            params["search"] = search
+        if genres:
+            params["genres"] = genres
+        if author:
+            params["author"] = author
+        if artist:
+            params["artist"] = artist
+        if status and status != "all":
+            params["status"] = status
+        if series_type and series_type != "all":
+            params["type"] = series_type
+        if min_chapters > 0:
+            params["min_chapters"] = min_chapters
+
+        payload = self._api_get("/series", params)
+        items = payload.get("data") or []
+        normalized_items = []
+        for item in items:
+            title = fix_mojibake(str(item.get("title") or "Untitled"))
+            public_url = item.get("public_url") or f"/comics/{item.get('slug', '')}"
+            normalized_items.append({
+                "id": item.get("id"),
+                "slug": item.get("slug"),
+                "title": title,
+                "url": urljoin(self.base_url, public_url),
+                "cover_url": item.get("cover"),
+                "status": item.get("status"),
+                "type": item.get("type"),
+                "author": item.get("author"),
+                "artist": item.get("artist"),
+                "genres": item.get("genres") or [],
+                "chapter_count": int(item.get("chapter_count") or 0),
+                "rating": item.get("rating"),
+                "last_chapter_at": item.get("last_chapter_at"),
+                "popularity_rank": item.get("popularity_rank"),
+            })
+        meta = payload.get("meta") or {}
+        return {
+            "items": normalized_items,
+            "total": int(meta.get("total") or len(normalized_items)),
+            "limit": params["limit"],
+            "offset": params["offset"],
+        }
 
     def crawl_catalog(self, max_pages: int = 200, limit: int | None = None) -> list[AsuraSeries]:
         series: dict[str, AsuraSeries] = {}

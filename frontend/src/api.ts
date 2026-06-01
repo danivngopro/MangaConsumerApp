@@ -82,6 +82,58 @@ export type DownloadProgress = {
   percent: number;
 };
 
+export type BrowseFilters = {
+  genres: Array<{ id: number; name: string; slug: string }>;
+  authors: string[];
+  artists: string[];
+  statuses: string[];
+  types: string[];
+  sorts: string[];
+};
+
+export type BrowseSearchPayload = {
+  search: string;
+  genres: string[];
+  author: string;
+  artist: string;
+  status: string;
+  type: string;
+  sort: string;
+  order: string;
+  minChapters: number;
+  limit: number;
+  offset: number;
+};
+
+export type BrowseResult = {
+  id: number;
+  slug: string;
+  title: string;
+  url: string;
+  cover_url: string | null;
+  status: string | null;
+  type: string | null;
+  author: string | null;
+  artist: string | null;
+  genres: Array<{ id: number; name: string; slug: string }>;
+  chapter_count: number;
+  rating: number | null;
+  last_chapter_at: string | null;
+  popularity_rank: number | null;
+  is_existing: boolean;
+  is_tracked: boolean;
+  local_chapter_count: number;
+  missing_count: number;
+  local_folder: string | null;
+};
+
+export type BrowseSearchResponse = {
+  items: BrowseResult[];
+  total: number;
+  limit: number;
+  offset: number;
+};
+
 export type AuthStatus = {
   authenticated: boolean;
   username: string | null;
@@ -123,6 +175,12 @@ export const api = {
   bookDetail: (mangaId: number) => request<BookDetail>(`/api/books/${mangaId}`),
   jobs: () => request<Job[]>("/api/jobs"),
   progress: () => request<DownloadProgress[]>("/api/progress"),
+  asuraFilters: () => request<BrowseFilters>("/api/asura/filters"),
+  asuraSearch: (payload: BrowseSearchPayload) =>
+    request<BrowseSearchResponse>("/api/asura/search", {
+      method: "POST",
+      body: JSON.stringify(payload),
+    }),
   fullScan: (limit?: number | null) =>
     request<{ started: boolean; limit: number | null }>("/api/scan/full", {
       method: "POST",
