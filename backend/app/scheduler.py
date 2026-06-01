@@ -154,6 +154,7 @@ class ScanScheduler:
             "reason": "top-up started",
         }
 
+    def run_next_limited_scan_batch(self, claimed: tuple[int, int] | None = None) -> dict | None:
         if not self._scan_lock.acquire(blocking=False):
             repository.log(self.conn, "info", "Limited scan batch request ignored because a scan is already running")
             return None
@@ -252,12 +253,27 @@ class ScanScheduler:
             threshold = int(repository.get_setting(self.conn, "limited_scan_active_threshold", "300") or "300")
             active_count = repository.active_download_job_count(self.conn)
             if active_count >= threshold:
+                repository.stop_limited_scan_state(self.conn)
+                repository.log(
+                    self.conn,
+                    "info",
+                    f"Limited scan top-up complete; active chapters {active_count}/{threshold}",
+                )
                 return last_result
             result = self.run_next_limited_scan_batch()
             if result is None:
                 return last_result
             last_result = result
             if result.get("stopped") or result.get("exhausted") or not result.get("batchMangaIds"):
+                return last_result
+            active_count = repository.active_download_job_count(self.conn)
+            if active_count >= threshold:
+                repository.stop_limited_scan_state(self.conn)
+                repository.log(
+                    self.conn,
+                    "info",
+                    f"Limited scan top-up complete after adding book; active chapters {active_count}/{threshold}",
+                )
                 return last_result
         return last_result
 
