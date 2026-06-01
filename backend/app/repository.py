@@ -308,7 +308,7 @@ def download_now_atomic(conn: sqlite3.Connection, manga_id: int) -> tuple[int, i
         paused = conn.execute(
             """UPDATE jobs SET status = 'auto_paused'
                WHERE type = 'download' AND status = 'queued'
-               AND priority = 0 AND manga_id != ?""",
+               AND manga_id != ?""",
             (manga_id,),
         ).rowcount
         upgraded = conn.execute(
