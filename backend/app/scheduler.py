@@ -35,7 +35,7 @@ class ScanScheduler:
 
     def run_full_scan_async(self, limit: int | None = None) -> None:
         if limit is not None:
-            threading.Thread(target=lambda: self.start_limited_scan(limit), name="limited-scan", daemon=True).start()
+            self.start_limited_scan_async(limit)
             return
         threading.Thread(target=lambda: self.run_full_scan(None), name="manual-full-scan", daemon=True).start()
 
@@ -91,6 +91,19 @@ class ScanScheduler:
 
     def start_limited_scan(self, active_threshold: int) -> dict | None:
         active_threshold = max(1, int(active_threshold))
+        result = self._prepare_limited_scan(active_threshold)
+        if not result["started"]:
+            return result
+        return self._top_up_limited_scan()
+
+    def start_limited_scan_async(self, active_threshold: int) -> dict:
+        active_threshold = max(1, int(active_threshold))
+        result = self._prepare_limited_scan(active_threshold)
+        if result["started"]:
+            threading.Thread(target=self._top_up_limited_scan, name="limited-scan", daemon=True).start()
+        return result
+
+    def _prepare_limited_scan(self, active_threshold: int) -> dict:
         active_count = repository.active_download_job_count(self.conn)
         if active_count >= active_threshold:
             self._cancel_scan.set()
@@ -104,6 +117,7 @@ class ScanScheduler:
                 "activeChapters": active_count,
                 "threshold": active_threshold,
                 "started": False,
+                "reason": "active chapters already meet or exceed threshold",
             }
         if self.scan_running:
             self._cancel_scan.set()
@@ -113,13 +127,28 @@ class ScanScheduler:
                 "info",
                 "Limited scan top-up request stopped the current scan; retry after it finishes",
             )
-            return None
+            return {
+                "activeChapters": active_count,
+                "threshold": active_threshold,
+                "started": False,
+                "reason": "another scan is running; cancellation requested",
+            }
         self._cancel_scan.clear()
         if not repository.start_limited_scan_state(self.conn, active_threshold):
             repository.log(self.conn, "info", "Limited scan start ignored because a batch is already being selected")
-            return None
+            return {
+                "activeChapters": active_count,
+                "threshold": active_threshold,
+                "started": False,
+                "reason": "another top-up batch is already being selected",
+            }
         repository.log(self.conn, "info", f"Limited scan top-up started with active chapter threshold {active_threshold}")
-        return self._top_up_limited_scan()
+        return {
+            "activeChapters": active_count,
+            "threshold": active_threshold,
+            "started": True,
+            "reason": "top-up started",
+        }
 
     def run_next_limited_scan_batch(self, claimed: tuple[int, int] | None = None) -> dict | None:
         if claimed is None:

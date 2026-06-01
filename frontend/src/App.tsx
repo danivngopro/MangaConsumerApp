@@ -128,9 +128,18 @@ export function App() {
     setLoading(true);
     setStatus(label);
     try {
-      await action();
+      const result = await action();
       await refresh();
-      setStatus(`${label} started`);
+      if (
+        result &&
+        typeof result === "object" &&
+        "reason" in result &&
+        typeof result.reason === "string"
+      ) {
+        setStatus(`${label}: ${result.reason}`);
+      } else {
+        setStatus(`${label} started`);
+      }
     } catch (error) {
       setStatus(error instanceof Error ? error.message : String(error));
     } finally {
@@ -495,7 +504,7 @@ export function App() {
               className="secondary"
               onClick={() =>
                 runAction(`Top up below ${scanLimit} active chapters`, () =>
-                  api.fullScan(scanLimit),
+                  api.startTopUp(scanLimit),
                 )
               }
               disabled={loading}
@@ -973,11 +982,11 @@ export function App() {
 
 function TotalProgressBar({ progress }: { progress: DownloadProgress[] }) {
   const totalDone = progress.reduce((sum, p) => sum + p.done, 0);
-  const totalItems = progress.reduce((sum, p) => sum + p.total, 0);
   const totalActive = progress.reduce(
     (sum, p) => sum + p.queued + p.running + p.paused + p.failed,
     0,
   );
+  const totalItems = totalDone + totalActive;
   const percent =
     totalItems > 0 ? Math.round((totalDone / totalItems) * 100) : 0;
 

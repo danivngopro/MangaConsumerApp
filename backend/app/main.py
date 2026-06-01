@@ -317,12 +317,16 @@ def scan_local_library(_user: dict = Depends(authenticated_user)) -> dict:
 
 @app.post("/api/scan/full")
 def start_full_scan(payload: FullScanRequest | None = None, _user: dict = Depends(authenticated_user)) -> dict:
-    limit = None
-    if payload and payload.limit is not None:
-        limit = max(1, min(500, int(payload.limit)))
     scan_stop_event.clear()
-    scan_scheduler.run_full_scan_async(limit)
-    return {"started": True, "limit": limit}
+    scan_scheduler.run_full_scan_async(None)
+    return {"started": True, "limit": None}
+
+
+@app.post("/api/scan/top-up")
+def start_top_up(payload: FullScanRequest, _user: dict = Depends(authenticated_user)) -> dict:
+    threshold = max(1, min(5000, int(payload.limit or 300)))
+    scan_stop_event.clear()
+    return scan_scheduler.start_limited_scan_async(threshold)
 
 
 @app.post("/api/scan/stop")

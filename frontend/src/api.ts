@@ -226,6 +226,16 @@ export const api = {
       method: "POST",
       body: JSON.stringify({ limit: limit || null }),
     }),
+  startTopUp: (threshold: number) =>
+    request<{
+      started: boolean;
+      activeChapters: number;
+      threshold: number;
+      reason: string;
+    }>("/api/scan/top-up", {
+      method: "POST",
+      body: JSON.stringify({ limit: threshold }),
+    }),
   stopScan: () =>
     request<{ stopRequested: boolean; scanRunning: boolean }>("/api/scan/stop", {
       method: "POST",
