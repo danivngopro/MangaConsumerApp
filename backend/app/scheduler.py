@@ -103,7 +103,7 @@ class ScanScheduler:
     def start_limited_scan_async(self, active_threshold: int) -> dict:
         active_threshold = max(1, int(active_threshold))
         result = self._prepare_limited_scan(active_threshold)
-        if result["started"]:
+        if result["started"] and result.get("needsScan", True):
             threading.Thread(target=self._top_up_limited_scan, name="limited-scan", daemon=True).start()
         return result
 
@@ -121,21 +121,22 @@ class ScanScheduler:
                 "activeChapters": active_count,
                 "threshold": active_threshold,
                 "started": True,
+                "needsScan": False,
                 "reason": "top-up armed; waiting for active chapters to drop below threshold",
             }
         if self.scan_running:
-            self._cancel_scan.set()
-            repository.stop_limited_scan_state(self.conn)
+            repository.start_limited_scan_state(self.conn, active_threshold)
             repository.log(
                 self.conn,
                 "info",
-                "Limited scan top-up request stopped the current scan; retry after it finishes",
+                f"Limited scan top-up threshold updated to {active_threshold}; waiting for the current scan to finish",
             )
             return {
                 "activeChapters": active_count,
                 "threshold": active_threshold,
-                "started": False,
-                "reason": "another scan is running; cancellation requested",
+                "started": True,
+                "needsScan": False,
+                "reason": "top-up threshold saved; waiting for the current scan to finish",
             }
         self._cancel_scan.clear()
         if not repository.start_limited_scan_state(self.conn, active_threshold):
@@ -144,6 +145,7 @@ class ScanScheduler:
                 "activeChapters": active_count,
                 "threshold": active_threshold,
                 "started": False,
+                "needsScan": False,
                 "reason": "another top-up batch is already being selected",
             }
         repository.log(self.conn, "info", f"Limited scan top-up started with active chapter threshold {active_threshold}")
@@ -151,6 +153,7 @@ class ScanScheduler:
             "activeChapters": active_count,
             "threshold": active_threshold,
             "started": True,
+            "needsScan": True,
             "reason": "top-up started",
         }
 

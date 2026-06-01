@@ -29,9 +29,14 @@ class FullScanRequest(BaseModel):
     limit: int | None = None
 
 
+class TopUpThresholdRequest(BaseModel):
+    threshold: int
+
+
 class SettingsRequest(BaseModel):
     autoScanEveryDays: int
     downloadConcurrency: int
+    komgaAutoEnabled: bool = False
 
 
 class BrowseSearchRequest(BaseModel):
@@ -64,6 +69,11 @@ repository.set_setting(
     conn,
     "download_concurrency",
     repository.get_setting(conn, "download_concurrency", str(settings.download_concurrency)),
+)
+repository.set_setting(
+    conn,
+    "komga_auto_enabled",
+    repository.get_setting(conn, "komga_auto_enabled", "0"),
 )
 
 asura_client = AsuraClient(settings.asura_base_url, settings.request_delay_seconds)
@@ -129,6 +139,7 @@ def health() -> dict:
         "database": str(db_path),
         "queuePaused": download_queue.paused,
         "downloadConcurrency": download_queue.concurrency,
+        "komgaAutoEnabled": repository.get_setting(conn, "komga_auto_enabled", "0") == "1",
     }
 
 
@@ -158,6 +169,7 @@ def summary(_user: dict = Depends(authenticated_user)) -> dict:
     data["queuePaused"] = download_queue.paused
     data["libraryRoot"] = str(settings.library_root)
     data["komgaUrl"] = settings.komga_url
+    data["komgaAutoEnabled"] = repository.get_setting(conn, "komga_auto_enabled", "0") == "1"
     data["autoScanEveryDays"] = int(repository.get_setting(conn, "auto_scan_every_days", "0") or "0")
     data["downloadConcurrency"] = download_queue.concurrency
     data["limitedScanActive"] = repository.get_setting(conn, "limited_scan_active", "0") == "1"
@@ -206,6 +218,7 @@ def debug_threads(_user: dict = Depends(authenticated_user)) -> dict:
             "limitedScanBatchRunning": repository.get_setting(conn, "limited_scan_batch_running", "0") == "1",
             "limitedScanActiveThreshold": int(repository.get_setting(conn, "limited_scan_active_threshold", "300") or "300"),
             "autoScanEveryDays": int(repository.get_setting(conn, "auto_scan_every_days", "0") or "0"),
+            "komgaAutoEnabled": repository.get_setting(conn, "komga_auto_enabled", "0") == "1",
         },
     }
 
@@ -289,6 +302,7 @@ def get_settings(_user: dict = Depends(authenticated_user)) -> dict:
         "libraryRoot": str(settings.library_root),
         "komgaUrl": settings.komga_url,
         "komgaBooksRootDocker": settings.komga_books_root_docker,
+        "komgaAutoEnabled": repository.get_setting(conn, "komga_auto_enabled", "0") == "1",
         "autoScanEveryDays": int(repository.get_setting(conn, "auto_scan_every_days", "0") or "0"),
         "downloadConcurrency": download_queue.concurrency,
         "queuePaused": download_queue.paused,
@@ -302,11 +316,14 @@ def get_settings(_user: dict = Depends(authenticated_user)) -> dict:
 def update_settings(payload: SettingsRequest, _user: dict = Depends(authenticated_user)) -> dict:
     days = max(0, int(payload.autoScanEveryDays))
     concurrency = max(1, min(6, int(payload.downloadConcurrency)))
+    komga_auto_enabled = bool(payload.komgaAutoEnabled)
     repository.set_setting(conn, "auto_scan_every_days", str(days))
     repository.set_setting(conn, "download_concurrency", str(concurrency))
+    repository.set_setting(conn, "komga_auto_enabled", "1" if komga_auto_enabled else "0")
     download_queue.set_concurrency(concurrency)
     repository.log(conn, "info", f"Auto full scan interval set to {days} days")
     repository.log(conn, "info", f"Download concurrency set to {concurrency}")
+    repository.log(conn, "info", f"Auto Komga import/scan set to {'enabled' if komga_auto_enabled else 'disabled'}")
     return get_settings(_user)
 
 
@@ -327,6 +344,13 @@ def start_top_up(payload: FullScanRequest, _user: dict = Depends(authenticated_u
     threshold = max(1, min(5000, int(payload.limit or 300)))
     scan_stop_event.clear()
     return scan_scheduler.start_limited_scan_async(threshold)
+
+
+@app.post("/api/scan/top-up-threshold")
+def update_top_up_threshold(payload: TopUpThresholdRequest, _user: dict = Depends(authenticated_user)) -> dict:
+    threshold = repository.set_limited_scan_threshold(conn, max(1, min(5000, int(payload.threshold))))
+    repository.log(conn, "info", f"Top-up threshold default set to {threshold} active chapters")
+    return {"threshold": threshold}
 
 
 @app.post("/api/scan/stop")

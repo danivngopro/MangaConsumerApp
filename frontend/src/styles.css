@@ -412,6 +412,11 @@ textarea:focus {
   width: 88px;
 }
 
+.settings-form .checkbox-label input {
+  width: 16px;
+  flex: 0 0 auto;
+}
+
 .status-line {
   min-height: 20px;
   margin: 12px 0 0;

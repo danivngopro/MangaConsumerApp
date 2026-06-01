@@ -112,7 +112,8 @@ class DownloadQueue:
                 repository.set_job_status(self.conn, job["id"], "done")
                 repository.log(self.conn, "info", f"Downloaded {manga['title']} {chapter['label']} to {file_path}")
                 repository.maybe_resume_auto_paused(self.conn)
-                if not repository.has_pending_download_jobs_for_manga(self.conn, int(manga["id"])):
+                komga_auto_enabled = repository.get_setting(self.conn, "komga_auto_enabled", "0") == "1"
+                if komga_auto_enabled and not repository.has_pending_download_jobs_for_manga(self.conn, int(manga["id"])):
                     run_post_download_komga_action(
                         self.conn,
                         self.komga_client,

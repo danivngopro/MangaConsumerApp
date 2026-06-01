@@ -87,19 +87,31 @@ def start_limited_scan_state(conn: sqlite3.Connection, active_threshold: int) ->
     with DB_LOCK:
         conn.execute("BEGIN IMMEDIATE")
         try:
+            is_active = get_setting(conn, "limited_scan_active", "0") == "1"
             if get_setting(conn, "limited_scan_batch_running", "0") == "1":
+                if is_active:
+                    _set_setting_uncommitted(conn, "limited_scan_active_threshold", str(max(1, int(active_threshold))))
+                    conn.commit()
+                    return True
                 conn.execute("ROLLBACK")
                 return False
             _set_setting_uncommitted(conn, "limited_scan_active", "1")
             _set_setting_uncommitted(conn, "limited_scan_active_threshold", str(max(1, int(active_threshold))))
-            _set_setting_uncommitted(conn, "limited_scan_offset", "0")
-            _set_setting_uncommitted(conn, "limited_scan_batch_manga_ids", "[]")
+            if not is_active:
+                _set_setting_uncommitted(conn, "limited_scan_offset", "0")
+                _set_setting_uncommitted(conn, "limited_scan_batch_manga_ids", "[]")
             _set_setting_uncommitted(conn, "limited_scan_batch_running", "0")
             conn.commit()
             return True
         except Exception:
             conn.execute("ROLLBACK")
             raise
+
+
+def set_limited_scan_threshold(conn: sqlite3.Connection, active_threshold: int) -> int:
+    threshold = max(1, int(active_threshold))
+    set_setting(conn, "limited_scan_active_threshold", str(threshold))
+    return threshold
 
 
 def claim_limited_scan_batch(conn: sqlite3.Connection) -> tuple[int, int] | None:

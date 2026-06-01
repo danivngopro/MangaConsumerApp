@@ -11,6 +11,7 @@ export type Summary = {
   queuePaused: boolean;
   limitedScanActive: boolean;
   scanRunning: boolean;
+  komgaAutoEnabled: boolean;
   limitedScanActiveThreshold: number;
   libraryRoot: string;
   komgaUrl: string;
@@ -177,6 +178,7 @@ export type DebugThreads = {
     limitedScanBatchRunning: boolean;
     limitedScanActiveThreshold: number;
     autoScanEveryDays: number;
+    komgaAutoEnabled: boolean;
   };
 };
 
@@ -236,6 +238,11 @@ export const api = {
       method: "POST",
       body: JSON.stringify({ limit: threshold }),
     }),
+  updateTopUpThreshold: (threshold: number) =>
+    request<{ threshold: number }>("/api/scan/top-up-threshold", {
+      method: "POST",
+      body: JSON.stringify({ threshold }),
+    }),
   stopScan: () =>
     request<{ stopRequested: boolean; scanRunning: boolean }>("/api/scan/stop", {
       method: "POST",
@@ -269,10 +276,18 @@ export const api = {
     request<{ paused: number; upgraded: number; mangaId: number }>(`/api/books/${mangaId}/download-now`, {
       method: "POST",
     }),
-  updateSettings: (autoScanEveryDays: number, downloadConcurrency: number) =>
+  updateSettings: (
+    autoScanEveryDays: number,
+    downloadConcurrency: number,
+    komgaAutoEnabled: boolean,
+  ) =>
     request<Summary>("/api/settings", {
       method: "POST",
-      body: JSON.stringify({ autoScanEveryDays, downloadConcurrency }),
+      body: JSON.stringify({
+        autoScanEveryDays,
+        downloadConcurrency,
+        komgaAutoEnabled,
+      }),
     }),
   pauseQueue: () =>
     request<{ queuePaused: boolean }>("/api/queue/pause", { method: "POST" }),

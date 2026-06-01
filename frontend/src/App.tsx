@@ -42,6 +42,7 @@ const emptySummary: Summary = {
   queuePaused: false,
   limitedScanActive: false,
   scanRunning: false,
+  komgaAutoEnabled: false,
   limitedScanActiveThreshold: 300,
   libraryRoot: "",
   komgaUrl: "",
@@ -84,6 +85,7 @@ export function App() {
   const [scanLimit, setScanLimit] = useState(300);
   const [intervalDays, setIntervalDays] = useState(0);
   const [downloadConcurrency, setDownloadConcurrency] = useState(1);
+  const [komgaAutoEnabled, setKomgaAutoEnabled] = useState(false);
   const [status, setStatus] = useState("Ready");
   const [loading, setLoading] = useState(false);
   const [scanLimitFocused, setScanLimitFocused] = useState(false);
@@ -104,6 +106,7 @@ export function App() {
     setDebugThreads(nextThreads);
     setIntervalDays(nextSummary.autoScanEveryDays);
     setDownloadConcurrency(nextSummary.downloadConcurrency);
+    setKomgaAutoEnabled(nextSummary.komgaAutoEnabled);
     if (!scanLimitFocused) {
       setScanLimit(nextSummary.limitedScanActiveThreshold);
     }
@@ -157,7 +160,7 @@ export function App() {
   async function submitSettings(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
     await runAction("Settings update", () =>
-      api.updateSettings(intervalDays, downloadConcurrency),
+      api.updateSettings(intervalDays, downloadConcurrency, komgaAutoEnabled),
     );
   }
 
@@ -277,6 +280,18 @@ export function App() {
       "Remove 0% queued downloads",
       api.deleteZeroPercentQueuedDownloads,
     );
+  }
+
+  function updateScanLimit(value: number) {
+    setScanLimit(value);
+    if (!Number.isFinite(value) || value < 1 || value > 5000) {
+      return;
+    }
+    api
+      .updateTopUpThreshold(value)
+      .catch((error) =>
+        setStatus(error instanceof Error ? error.message : String(error)),
+      );
   }
 
   if (!authStatus) {
@@ -496,7 +511,9 @@ export function App() {
                 value={scanLimit}
                 onFocus={() => setScanLimitFocused(true)}
                 onBlur={() => setScanLimitFocused(false)}
-                onChange={(event) => setScanLimit(Number(event.target.value))}
+                onChange={(event) =>
+                  updateScanLimit(Number(event.target.value))
+                }
               />
               chapters
             </label>
@@ -561,13 +578,24 @@ export function App() {
                 }
               />
             </label>
+            <label className="checkbox-label">
+              <input
+                type="checkbox"
+                checked={komgaAutoEnabled}
+                onChange={(event) =>
+                  setKomgaAutoEnabled(event.target.checked)
+                }
+              />
+              Auto Komga import/scan after downloads
+            </label>
             <button className="secondary" disabled={loading}>
               Save
             </button>
           </form>
           <p className="muted">
             Auto scan 0 disables scheduling. Concurrent downloads controls
-            parallel chapter workers. Last scan:{" "}
+            parallel chapter workers. Komga automation is{" "}
+            {summary.komgaAutoEnabled ? "enabled" : "disabled"}. Last scan:{" "}
             {summary.lastScanAt
               ? new Date(summary.lastScanAt).toLocaleString()
               : "never"}

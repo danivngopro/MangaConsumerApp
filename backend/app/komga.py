@@ -62,7 +62,7 @@ class KomgaClient:
             "repairExtensions": True,
             "convertToCbz": True,
             "emptyTrashAfterScan": True,
-            "scanOnStartup": True,
+            "scanOnStartup": False,
         }
         response = self.session.post(self.libraries_url, json=payload, timeout=30)
         response.raise_for_status()
