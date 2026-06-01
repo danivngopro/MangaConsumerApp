@@ -43,7 +43,11 @@ class ScanScheduler:
         self._cancel_scan.set()
         repository.stop_limited_scan_state(self.conn)
         repository.log(self.conn, "info", "Scan stop requested")
-        return {"stopRequested": True, "scanRunning": self.scan_running}
+        return {
+            "stopRequested": True,
+            "scanRunning": self.scan_running,
+            "limitedScanActive": False,
+        }
 
     def stop_all_scan_work(self) -> dict:
         self._cancel_scan.set()
@@ -150,18 +154,25 @@ class ScanScheduler:
             "reason": "top-up started",
         }
 
-    def run_next_limited_scan_batch(self, claimed: tuple[int, int] | None = None) -> dict | None:
-        if claimed is None:
-            claimed = repository.claim_limited_scan_batch(self.conn)
-            if claimed is None:
-                repository.log(self.conn, "info", "Limited scan batch request ignored because another scheduler already claimed it")
-                return None
         if not self._scan_lock.acquire(blocking=False):
             repository.log(self.conn, "info", "Limited scan batch request ignored because a scan is already running")
-            repository.set_setting(self.conn, "limited_scan_batch_running", "0")
             return None
         try:
+            if claimed is None:
+                claimed = repository.claim_limited_scan_batch(self.conn)
+                if claimed is None:
+                    repository.log(self.conn, "info", "Limited scan batch request ignored because threshold is met or another scheduler already claimed it")
+                    return None
             active_threshold, offset = claimed
+            active_count = repository.active_download_job_count(self.conn)
+            if active_count >= active_threshold:
+                repository.set_setting(self.conn, "limited_scan_batch_running", "0")
+                repository.log(
+                    self.conn,
+                    "info",
+                    f"Limited scan batch skipped; active chapters already {active_count}/{active_threshold}",
+                )
+                return None
             self._current_scan = {
                 "kind": "top-up",
                 "threshold": active_threshold,
