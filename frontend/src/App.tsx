@@ -58,6 +58,8 @@ export function App() {
   const [browseMinChapters, setBrowseMinChapters] = useState(0);
   const [browseMaxChapters, setBrowseMaxChapters] = useState(0);
   const [searchCollapsed, setSearchCollapsed] = useState(false);
+  const [progressSearch, setProgressSearch] = useState("");
+  const [progressFilter, setProgressFilter] = useState<"all" | "downloading" | "queued" | "done">("all");
   const [hideExisting, setHideExisting] = useState(true);
   const [hideStringText, setHideStringText] = useState("");
   const [query, setQuery] = useState("");
@@ -215,11 +217,19 @@ export function App() {
 
   const modalItem = modalBookId ? progress.find((p) => p.manga_id === modalBookId) : null;
 
+  const filteredProgress = progress.filter((item) => {
+    if (progressSearch && !item.manga_title.toLowerCase().includes(progressSearch.toLowerCase())) return false;
+    if (progressFilter === "downloading" && item.running === 0) return false;
+    if (progressFilter === "queued" && item.queued === 0) return false;
+    if (progressFilter === "done" && (item.queued > 0 || item.running > 0 || item.missing_count > 0)) return false;
+    return true;
+  });
+
   return (
     <main className="app-shell">
       <header className="topbar">
         <div className="brand-block">
-          <img className="site-mark" src="/site-icon.png" alt="" />
+          <img className="site-mark" src="/site-icon2.png" alt="" />
           <div>
             <h1>Asura Komga Manager</h1>
             <p>{summary.libraryRoot || "Backend not connected"}</p>
@@ -529,7 +539,7 @@ export function App() {
                   key={item.id}
                   item={item}
                   loading={loading || browseLoading}
-                  onAdd={() => runAction(`Add book: ${item.title}`, () => api.specificScan(item.url))}
+                  onAdd={() => runAction(`Add book: ${item.title}`, () => api.specificPriorityScan(item.url))}
                 />
               ))}
               {!visibleBrowseResults.length && <p className="empty">No visible search results yet.</p>}
@@ -546,20 +556,42 @@ export function App() {
           <Info size={18} />
           Books and Download Progress
         </div>
-        {progress.length ? (
+        <div className="progress-controls">
+          <input
+            className="progress-search"
+            value={progressSearch}
+            onChange={(e) => setProgressSearch(e.target.value)}
+            placeholder="Search books..."
+          />
+          <div className="progress-filter-chips">
+            {(["all", "downloading", "queued", "done"] as const).map((f) => (
+              <button
+                key={f}
+                type="button"
+                className={progressFilter === f ? "chip selected" : "chip"}
+                onClick={() => setProgressFilter(f)}
+              >
+                {f}
+              </button>
+            ))}
+          </div>
+          <span className="progress-count">{filteredProgress.length} / {progress.length}</span>
+        </div>
+        {filteredProgress.length ? (
           <div className="progress-list">
-            {progress.map((item) => (
+            {filteredProgress.map((item) => (
               <ProgressRow
                 key={item.manga_id}
                 item={item}
                 active={modalBookId === item.manga_id}
                 loading={loading}
                 onOpen={() => openBook(item.manga_id)}
+                onDownloadNow={() => runAction(`Download now: ${item.manga_title}`, () => api.downloadNow(item.manga_id))}
               />
             ))}
           </div>
         ) : (
-          <p className="empty">No tracked books yet. Run a scan to populate progress.</p>
+          <p className="empty">{progress.length ? "No books match the current filter." : "No tracked books yet. Run a scan to populate progress."}</p>
         )}
       </section>
 
@@ -571,6 +603,7 @@ export function App() {
           loading={loading}
           onClose={() => setModalBookId(null)}
           onRefresh={() => runAction(`Refresh: ${modalItem.manga_title}`, () => refreshBook(modalBookId))}
+          onDownloadNow={() => runAction(`Download now: ${modalItem.manga_title}`, () => api.downloadNow(modalBookId))}
           onPause={() => pauseOrResumeBook(modalItem, details[modalBookId])}
           onQuickScan={() => runAction(`Fast Komga scan: ${modalItem.manga_title}`, () => api.quickScanBook(modalBookId))}
           onImport={() => runAction(`Komga import: ${modalItem.manga_title}`, () => api.importBook(modalBookId))}
@@ -610,14 +643,17 @@ function ProgressRow({
   active,
   loading,
   onOpen,
+  onDownloadNow,
 }: {
   item: DownloadProgress;
   active: boolean;
   loading: boolean;
   onOpen: () => void;
+  onDownloadNow: () => void;
 }) {
   const episodeTotal = item.remote_chapter_count || item.total || 0;
   const downloaded = item.available_count ?? item.done;
+  const hasWork = item.queued > 0 || item.paused > 0;
 
   return (
     <article className={`progress-row${active ? " active" : ""}`}>
@@ -643,6 +679,16 @@ function ProgressRow({
         </div>
         <ChevronDown className="progress-chevron" size={18} />
       </button>
+      {hasWork && (
+        <button
+          className="download-now-btn"
+          onClick={(e) => { e.stopPropagation(); onDownloadNow(); }}
+          disabled={loading}
+          title="Pause all other downloads and download this book first."
+        >
+          ↑ Download now
+        </button>
+      )}
     </article>
   );
 }
@@ -653,6 +699,7 @@ function BookDetailModal({
   loading,
   onClose,
   onRefresh,
+  onDownloadNow,
   onPause,
   onQuickScan,
   onImport,
@@ -664,6 +711,7 @@ function BookDetailModal({
   loading: boolean;
   onClose: () => void;
   onRefresh: () => void;
+  onDownloadNow: () => void;
   onPause: () => void;
   onQuickScan: () => void;
   onImport: () => void;
@@ -699,6 +747,13 @@ function BookDetailModal({
 
         <div className="book-action-bar">
           <IconButton icon={<RefreshCw size={16} />} label="Refresh" title="Refresh this book's details." onClick={onRefresh} disabled={loading} />
+          <IconButton
+            icon={<Download size={16} />}
+            label="Download now"
+            title="Pause all other downloads and download this book first."
+            onClick={onDownloadNow}
+            disabled={loading}
+          />
           <IconButton
             icon={paused ? <Play size={16} /> : <Pause size={16} />}
             label={paused ? "Resume" : "Pause"}
@@ -824,7 +879,7 @@ function AuthScreen({ authStatus, onAuthenticated }: { authStatus: AuthStatus; o
   return (
     <main className="auth-shell">
       <form className="auth-panel" onSubmit={submit}>
-        <img className="auth-logo" src="/site-icon.png" alt="" />
+        <img className="auth-logo" src="/site-icon2.png" alt="" />
         <div className="auth-icon"><Lock size={22} /></div>
         <h1>{mode === "register" ? "Create owner account" : "Log in"}</h1>
         <p>

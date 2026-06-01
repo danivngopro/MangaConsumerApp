@@ -197,6 +197,15 @@ export const api = {
       method: "POST",
       body: JSON.stringify({ query }),
     }),
+  specificPriorityScan: (query: string) =>
+    request<{ started: boolean; query: string }>("/api/scan/specific-priority", {
+      method: "POST",
+      body: JSON.stringify({ query }),
+    }),
+  downloadNow: (mangaId: number) =>
+    request<{ paused: number; upgraded: number; mangaId: number }>(`/api/books/${mangaId}/download-now`, {
+      method: "POST",
+    }),
   updateSettings: (autoScanEveryDays: number, downloadConcurrency: number) =>
     request<Summary>("/api/settings", {
       method: "POST",

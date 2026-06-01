@@ -597,6 +597,52 @@ textarea:focus {
   margin-left: auto;
 }
 
+/* Progress search + filter */
+.progress-controls {
+  display: flex;
+  gap: 10px;
+  align-items: center;
+  flex-wrap: wrap;
+  margin-bottom: 14px;
+}
+
+.progress-search {
+  flex: 1;
+  min-width: 160px;
+  height: 36px;
+}
+
+.progress-filter-chips {
+  display: flex;
+  gap: 6px;
+}
+
+.progress-count {
+  color: #9aa5b5;
+  font-size: 13px;
+  white-space: nowrap;
+}
+
+/* Download now button — sits below the progress bar inside the row */
+.download-now-btn {
+  width: 100%;
+  height: 28px;
+  border-radius: 0 0 8px 8px;
+  font-size: 11px;
+  font-weight: 600;
+  background: rgba(124, 58, 237, 0.18);
+  border: 0;
+  border-top: 1px solid rgba(168, 85, 247, 0.2);
+  color: #d8b4fe;
+  letter-spacing: 0.02em;
+}
+
+.download-now-btn:not(:disabled):hover {
+  background: rgba(124, 58, 237, 0.35);
+  transform: none;
+  box-shadow: none;
+}
+
 /* Progress list */
 .progress-list {
   display: grid;

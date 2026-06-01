@@ -77,6 +77,7 @@ class DownloadQueue:
                 file_path = download_chapter(self.conn, self.library_root, self.temp_root, manga, chapter)
                 repository.set_job_status(self.conn, job["id"], "done")
                 repository.log(self.conn, "info", f"Downloaded {manga['title']} {chapter['label']} to {file_path}")
+                repository.maybe_resume_auto_paused(self.conn)
                 if not repository.has_pending_download_jobs_for_manga(self.conn, int(manga["id"])):
                     run_post_download_komga_action(
                         self.conn,
@@ -91,6 +92,7 @@ class DownloadQueue:
                 else:
                     repository.set_job_status(self.conn, job["id"], "failed", str(exc))
                     repository.log(self.conn, "error", f"Download failed for job {job['id']}: {exc}")
+                    repository.maybe_resume_auto_paused(self.conn)
 
     def _ensure_worker_count(self) -> None:
         with self._threads_lock:

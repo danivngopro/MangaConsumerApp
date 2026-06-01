@@ -300,6 +300,57 @@ def has_pending_download_jobs_for_manga(conn: sqlite3.Connection, manga_id: int)
     return int(row["count"]) > 0
 
 
+def auto_pause_queued_jobs(conn: sqlite3.Connection) -> int:
+    """Pause all queued priority-0 jobs so a priority book can run first."""
+    with DB_LOCK:
+        cursor = conn.execute(
+            "UPDATE jobs SET status = 'auto_paused' WHERE type = 'download' AND status = 'queued' AND priority = 0"
+        )
+        conn.commit()
+        return cursor.rowcount
+
+
+def auto_pause_other_queued_jobs(conn: sqlite3.Connection, manga_id: int) -> int:
+    """Pause all queued priority-0 jobs except for the given manga."""
+    with DB_LOCK:
+        cursor = conn.execute(
+            "UPDATE jobs SET status = 'auto_paused' WHERE type = 'download' AND status = 'queued' AND priority = 0 AND manga_id != ?",
+            (manga_id,),
+        )
+        conn.commit()
+        return cursor.rowcount
+
+
+def maybe_resume_auto_paused(conn: sqlite3.Connection) -> int:
+    """If no high-priority jobs remain, resume all auto-paused jobs."""
+    with DB_LOCK:
+        row = conn.execute(
+            "SELECT COUNT(*) AS count FROM jobs WHERE type = 'download' AND priority >= 1 AND status IN ('queued', 'running')"
+        ).fetchone()
+        if int(row["count"]) > 0:
+            return 0
+        cursor = conn.execute(
+            "UPDATE jobs SET status = 'queued' WHERE status = 'auto_paused'"
+        )
+        conn.commit()
+        return cursor.rowcount
+
+
+def set_manga_download_priority(conn: sqlite3.Connection, manga_id: int, priority: int) -> int:
+    with DB_LOCK:
+        cursor = conn.execute(
+            "UPDATE jobs SET priority = ? WHERE type = 'download' AND manga_id = ? AND status IN ('queued', 'auto_paused')",
+            (priority, manga_id),
+        )
+        # Also un-pause auto_paused jobs for this manga so they run
+        conn.execute(
+            "UPDATE jobs SET status = 'queued' WHERE type = 'download' AND manga_id = ? AND status = 'auto_paused'",
+            (manga_id,),
+        )
+        conn.commit()
+        return cursor.rowcount
+
+
 def pause_downloads_for_manga(conn: sqlite3.Connection, manga_id: int) -> int:
     with DB_LOCK:
         cursor = conn.execute(
@@ -496,11 +547,11 @@ def download_progress(conn: sqlite3.Connection) -> list[dict]:
             m.remote_chapter_count,
             m.missing_count,
             COALESCE(ch.downloaded_count, 0) AS newly_downloaded_count,
-            SUM(CASE WHEN j.status IN ('queued', 'running', 'done', 'failed', 'paused') THEN 1 ELSE 0 END) AS job_total,
+            SUM(CASE WHEN j.status IN ('queued', 'running', 'done', 'failed', 'paused', 'auto_paused') THEN 1 ELSE 0 END) AS job_total,
             SUM(CASE WHEN j.status = 'done' THEN 1 ELSE 0 END) AS job_done,
             SUM(CASE WHEN j.status = 'running' THEN 1 ELSE 0 END) AS running,
             SUM(CASE WHEN j.status = 'queued' THEN 1 ELSE 0 END) AS queued,
-            SUM(CASE WHEN j.status = 'paused' THEN 1 ELSE 0 END) AS paused,
+            SUM(CASE WHEN j.status IN ('paused', 'auto_paused') THEN 1 ELSE 0 END) AS paused,
             SUM(CASE WHEN j.status = 'failed' THEN 1 ELSE 0 END) AS failed,
             MAX(j.finished_at) AS last_finished_at,
             MAX(j.started_at) AS last_started_at

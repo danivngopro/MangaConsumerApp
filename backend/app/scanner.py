@@ -29,14 +29,14 @@ def scan_full_catalog(conn: sqlite3.Connection, client: AsuraClient, library_roo
     }
 
 
-def scan_specific(conn: sqlite3.Connection, client: AsuraClient, library_root, query: str) -> dict:
+def scan_specific(conn: sqlite3.Connection, client: AsuraClient, library_root, query: str, priority: int = 0) -> dict:
     scan_library(conn, library_root)
     inventory = repository.get_inventory_map(conn)
     series = client.find_series(query)
     if not series:
         raise ValueError(f"No Asura manga found for: {query}")
-    result = scan_one_series(conn, client, series, inventory)
-    repository.log(conn, "info", f"Specific scan complete: {series.title}, {result['enqueued']} downloads queued")
+    result = scan_one_series(conn, client, series, inventory, priority=priority)
+    repository.log(conn, "info", f"Specific scan complete: {series.title}, {result['enqueued']} downloads queued (priority={priority})")
     return result
 
 
