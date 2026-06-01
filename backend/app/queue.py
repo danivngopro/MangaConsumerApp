@@ -28,6 +28,7 @@ class DownloadQueue:
         self._paused = threading.Event()
         self._threads: list[threading.Thread] = []
         self._threads_lock = threading.Lock()
+        self._worker_jobs: dict[int, dict] = {}
 
     @property
     def paused(self) -> bool:
@@ -52,6 +53,27 @@ class DownloadQueue:
         self._concurrency = max(1, min(6, int(value)))
         self._ensure_worker_count()
 
+    def retire_worker(self, ident: int) -> dict:
+        with self._threads_lock:
+            target_index = next(
+                (
+                    index
+                    for index, thread in enumerate(self._threads)
+                    if thread.ident == ident and thread.is_alive()
+                ),
+                None,
+            )
+            if target_index is None:
+                return {"stopped": False, "reason": "worker not found"}
+            self._concurrency = max(0, min(self._concurrency, len(self._threads)) - 1)
+            if target_index < self._concurrency and self._threads:
+                self._threads.append(self._threads.pop(target_index))
+            return {
+                "stopped": True,
+                "reason": "worker will exit after current chapter or idle loop",
+                "concurrency": self._concurrency,
+            }
+
     def pause(self) -> None:
         self._paused.set()
 
@@ -70,9 +92,21 @@ class DownloadQueue:
             if not job:
                 time.sleep(2)
                 continue
+            self._worker_jobs[threading.get_ident()] = {
+                "jobId": job["id"],
+                "status": "claimed",
+                "startedAt": time.time(),
+            }
 
             try:
                 manga, chapter = repository.get_download_target(self.conn, job["id"])
+                self._worker_jobs[threading.get_ident()] = {
+                    "jobId": job["id"],
+                    "status": "downloading",
+                    "manga": manga["title"],
+                    "chapter": chapter["label"],
+                    "startedAt": time.time(),
+                }
                 existed_before_download = bool(manga.get("local_folder"))
                 file_path = download_chapter(self.conn, self.library_root, self.temp_root, manga, chapter)
                 repository.set_job_status(self.conn, job["id"], "done")
@@ -93,6 +127,8 @@ class DownloadQueue:
                     repository.set_job_status(self.conn, job["id"], "failed", str(exc))
                     repository.log(self.conn, "error", f"Download failed for job {job['id']}: {exc}")
                     repository.maybe_resume_auto_paused(self.conn)
+            finally:
+                self._worker_jobs.pop(threading.get_ident(), None)
 
     def _ensure_worker_count(self) -> None:
         with self._threads_lock:
@@ -112,3 +148,20 @@ class DownloadQueue:
             except ValueError:
                 return False
             return index >= self._concurrency
+
+    def debug_state(self) -> dict:
+        with self._threads_lock:
+            threads = [
+                {
+                    "name": thread.name,
+                    "ident": thread.ident,
+                    "alive": thread.is_alive(),
+                    "job": self._worker_jobs.get(thread.ident or -1),
+                }
+                for thread in self._threads
+            ]
+        return {
+            "paused": self.paused,
+            "concurrency": self.concurrency,
+            "workers": threads,
+        }

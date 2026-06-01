@@ -83,6 +83,7 @@ download_queue = DownloadQueue(
     int(repository.get_setting(conn, "download_concurrency", str(settings.download_concurrency))),
 )
 scan_scheduler = ScanScheduler(conn, asura_client, settings.library_root)
+scan_stop_event = threading.Event()
 
 app = FastAPI(title="Manga Crawler")
 app.add_middleware(
@@ -183,6 +184,65 @@ def jobs(_user: dict = Depends(authenticated_user)) -> list[dict]:
     return repository.list_jobs(conn)
 
 
+@app.get("/api/debug/threads")
+def debug_threads(_user: dict = Depends(authenticated_user)) -> dict:
+    threads = []
+    for thread in threading.enumerate():
+        threads.append(
+            {
+                "name": thread.name,
+                "ident": thread.ident,
+                "daemon": thread.daemon,
+                "alive": thread.is_alive(),
+            }
+        )
+    return {
+        "threads": threads,
+        "scanStopRequested": scan_stop_event.is_set(),
+        "scheduler": scan_scheduler.debug_state(),
+        "downloadQueue": download_queue.debug_state(),
+        "settings": {
+            "limitedScanActive": repository.get_setting(conn, "limited_scan_active", "0") == "1",
+            "limitedScanBatchRunning": repository.get_setting(conn, "limited_scan_batch_running", "0") == "1",
+            "limitedScanActiveThreshold": int(repository.get_setting(conn, "limited_scan_active_threshold", "300") or "300"),
+            "autoScanEveryDays": int(repository.get_setting(conn, "auto_scan_every_days", "0") or "0"),
+        },
+    }
+
+
+@app.post("/api/debug/threads/{thread_ident}/stop")
+def stop_thread(thread_ident: int, _user: dict = Depends(authenticated_user)) -> dict:
+    thread = next((item for item in threading.enumerate() if item.ident == thread_ident), None)
+    if thread is None:
+        raise HTTPException(status_code=404, detail="thread not found")
+
+    if thread.name.startswith("download-queue-"):
+        result = download_queue.retire_worker(thread_ident)
+        repository.log(conn, "info", f"Requested download worker stop for {thread.name}: {result['reason']}")
+        return {
+            "thread": thread.name,
+            "action": "retire-download-worker",
+            **result,
+        }
+
+    if any(part in thread.name for part in ("scan", "scheduler")):
+        scan_stop_event.set()
+        result = scan_scheduler.cancel_current_scan()
+        repository.log(conn, "info", f"Requested scan thread stop for {thread.name}")
+        return {
+            "thread": thread.name,
+            "action": "cancel-scan-work",
+            "stopped": True,
+            "reason": "scan cancellation requested; thread exits at next cancellation checkpoint",
+            **result,
+        }
+
+    raise HTTPException(
+        status_code=400,
+        detail="This thread is not managed by the app. Arbitrary Python threads cannot be safely killed.",
+    )
+
+
 @app.get("/api/progress")
 def progress(_user: dict = Depends(authenticated_user)) -> list[dict]:
     return repository.download_progress(conn)
@@ -260,13 +320,21 @@ def start_full_scan(payload: FullScanRequest | None = None, _user: dict = Depend
     limit = None
     if payload and payload.limit is not None:
         limit = max(1, min(500, int(payload.limit)))
+    scan_stop_event.clear()
     scan_scheduler.run_full_scan_async(limit)
     return {"started": True, "limit": limit}
 
 
 @app.post("/api/scan/stop")
 def stop_scan(_user: dict = Depends(authenticated_user)) -> dict:
+    scan_stop_event.set()
     return scan_scheduler.cancel_current_scan()
+
+
+@app.post("/api/scan/stop-all")
+def stop_all_scans(_user: dict = Depends(authenticated_user)) -> dict:
+    scan_stop_event.set()
+    return scan_scheduler.stop_all_scan_work()
 
 
 @app.post("/api/scan/specific")
@@ -277,10 +345,14 @@ def start_specific_scan(payload: SpecificScanRequest, _user: dict = Depends(auth
 
     def worker() -> None:
         try:
-            scan_specific(conn, asura_client, settings.library_root, query)
+            if scan_stop_event.is_set():
+                repository.log(conn, "info", f"Specific scan skipped after stop request: {query}")
+                return
+            scan_specific(conn, asura_client, settings.library_root, query, should_stop=scan_stop_event.is_set)
         except Exception as exc:
             repository.log(conn, "error", f"Specific scan failed for {query}: {exc}")
 
+    scan_stop_event.clear()
     threading.Thread(target=worker, name="specific-scan", daemon=True).start()
     return {"started": True, "query": query}
 
@@ -294,13 +366,20 @@ def start_specific_priority_scan(payload: SpecificScanRequest, _user: dict = Dep
 
     def worker() -> None:
         try:
-            result = scan_specific(conn, asura_client, settings.library_root, query, priority=2)
+            if scan_stop_event.is_set():
+                repository.log(conn, "info", f"Priority-add scan skipped after stop request: {query}")
+                return
+            result = scan_specific(conn, asura_client, settings.library_root, query, priority=2, should_stop=scan_stop_event.is_set)
+            if result.get("stopped") or int(result.get("mangaId") or 0) <= 0:
+                repository.log(conn, "info", f"Priority-add scan stopped before enqueueing: {query}")
+                return
             repository.stop_limited_scan_state(conn)
             paused = repository.pause_downloads_except_manga_ids(conn, [int(result["mangaId"])])
             repository.log(conn, "info", f"Asura search add is exclusive: paused {paused} other queued downloads")
         except Exception as exc:
             repository.log(conn, "error", f"Priority-add scan failed for {query}: {exc}")
 
+    scan_stop_event.clear()
     threading.Thread(target=worker, name="priority-add-scan", daemon=True).start()
     return {"started": True, "query": query}
 
@@ -318,10 +397,14 @@ def download_now(manga_id: int, _user: dict = Depends(authenticated_user)) -> di
         query = row["url"] or row["title"]
         def scan_worker() -> None:
             try:
-                scan_specific(conn, asura_client, settings.library_root, query, priority=2)
+                if scan_stop_event.is_set():
+                    repository.log(conn, "info", f"Download now scan skipped after stop request: {row['title']}")
+                    return
+                scan_specific(conn, asura_client, settings.library_root, query, priority=2, should_stop=scan_stop_event.is_set)
             except Exception as exc:
                 repository.log(conn, "error", f"Download now scan failed for {row['title']}: {exc}")
                 repository.maybe_resume_auto_paused(conn)
+        scan_stop_event.clear()
         threading.Thread(target=scan_worker, name="download-now-scan", daemon=True).start()
     return {"paused": paused, "upgraded": upgraded, "mangaId": manga_id}
 
@@ -453,7 +536,10 @@ def start_priority_scan(payload: BrowseSearchRequest, _user: dict = Depends(auth
 
     def worker() -> None:
         try:
-            result = scan_priority_books(conn, asura_client, settings.library_root, search_kwargs)
+            if scan_stop_event.is_set():
+                repository.log(conn, "info", "Priority scan skipped after stop request")
+                return
+            result = scan_priority_books(conn, asura_client, settings.library_root, search_kwargs, should_stop=scan_stop_event.is_set)
             repository.stop_limited_scan_state(conn)
             manga_ids = [int(manga_id) for manga_id in result.get("mangaIds", [])]
             paused = repository.pause_downloads_except_manga_ids(conn, manga_ids) if manga_ids else 0
@@ -461,6 +547,7 @@ def start_priority_scan(payload: BrowseSearchRequest, _user: dict = Depends(auth
         except Exception as exc:
             repository.log(conn, "error", f"Priority scan failed: {exc}")
 
+    scan_stop_event.clear()
     threading.Thread(target=worker, name="priority-scan", daemon=True).start()
     return {"started": True}
 

@@ -144,6 +144,42 @@ export type AuthStatus = {
   registrationOpen: boolean;
 };
 
+export type DebugThreads = {
+  threads: Array<{
+    name: string;
+    ident: number | null;
+    daemon: boolean;
+    alive: boolean;
+  }>;
+  scanStopRequested: boolean;
+  scheduler: {
+    scanRunning: boolean;
+    cancelRequested: boolean;
+    currentScan: Record<string, unknown> | null;
+    thread: {
+      name: string | null;
+      ident: number | null;
+      alive: boolean;
+    };
+  };
+  downloadQueue: {
+    paused: boolean;
+    concurrency: number;
+    workers: Array<{
+      name: string;
+      ident: number | null;
+      alive: boolean;
+      job: Record<string, unknown> | null;
+    }>;
+  };
+  settings: {
+    limitedScanActive: boolean;
+    limitedScanBatchRunning: boolean;
+    limitedScanActiveThreshold: number;
+    autoScanEveryDays: number;
+  };
+};
+
 const API_BASE =
   import.meta.env.VITE_API_BASE ??
   (window.location.port === "5173" ? "http://localhost:8816" : "");
@@ -194,6 +230,16 @@ export const api = {
     request<{ stopRequested: boolean; scanRunning: boolean }>("/api/scan/stop", {
       method: "POST",
     }),
+  stopAllScans: () =>
+    request<{ stopRequested: boolean; scanRunning: boolean }>("/api/scan/stop-all", {
+      method: "POST",
+    }),
+  debugThreads: () => request<DebugThreads>("/api/debug/threads"),
+  stopThread: (threadIdent: number) =>
+    request<{ stopped: boolean; reason: string }>(
+      `/api/debug/threads/${threadIdent}/stop`,
+      { method: "POST" },
+    ),
   libraryScan: () =>
     request<{ books: number; chapters: number; error: string | null }>(
       "/api/scan/library",

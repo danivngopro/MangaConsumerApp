@@ -24,7 +24,7 @@ def scan_full_catalog(
     for series_hint in series_list:
         if should_stop and should_stop():
             break
-        result = scan_one_series(conn, client, series_hint, inventory)
+        result = scan_one_series(conn, client, series_hint, inventory, should_stop=should_stop)
         scanned += 1
         enqueued += result["enqueued"]
 
@@ -87,9 +87,12 @@ def scan_limited_catalog_batch(
                     status=item.get("status"),
                     remote_chapter_count=int(item.get("chapter_count") or 0),
                 )
-                result_item = scan_one_series(conn, client, hint, inventory)
+                result_item = scan_one_series(conn, client, hint, inventory, should_stop=should_stop)
                 scanned += 1
                 enqueued += result_item["enqueued"]
+                if result_item.get("stopped"):
+                    stopped = True
+                    break
                 if result_item["missingChapters"] > 0:
                     batch_manga_ids.append(int(result_item["mangaId"]))
                     if len(batch_manga_ids) >= batch_size:
@@ -122,13 +125,24 @@ def scan_limited_catalog_batch(
     }
 
 
-def scan_specific(conn: sqlite3.Connection, client: AsuraClient, library_root, query: str, priority: int = 0) -> dict:
+def scan_specific(
+    conn: sqlite3.Connection,
+    client: AsuraClient,
+    library_root,
+    query: str,
+    priority: int = 0,
+    should_stop: Callable[[], bool] | None = None,
+) -> dict:
+    if should_stop and should_stop():
+        return {"mangaId": 0, "title": "", "remoteChapters": 0, "localChapters": 0, "missingChapters": 0, "enqueued": 0, "stopped": True}
     scan_library(conn, library_root)
     inventory = repository.get_inventory_map(conn)
+    if should_stop and should_stop():
+        return {"mangaId": 0, "title": "", "remoteChapters": 0, "localChapters": 0, "missingChapters": 0, "enqueued": 0, "stopped": True}
     series = client.find_series(query)
     if not series:
         raise ValueError(f"No Asura manga found for: {query}")
-    result = scan_one_series(conn, client, series, inventory, priority=priority)
+    result = scan_one_series(conn, client, series, inventory, priority=priority, should_stop=should_stop)
     repository.log(conn, "info", f"Specific scan complete: {series.title}, {result['enqueued']} downloads queued (priority={priority})")
     return result
 
@@ -139,8 +153,29 @@ def scan_one_series(
     series_hint: AsuraSeries,
     inventory: dict[str, dict],
     priority: int = 0,
+    should_stop: Callable[[], bool] | None = None,
 ) -> dict:
+    if should_stop and should_stop():
+        return {
+            "mangaId": 0,
+            "title": series_hint.title,
+            "remoteChapters": 0,
+            "localChapters": 0,
+            "missingChapters": 0,
+            "enqueued": 0,
+            "stopped": True,
+        }
     series, chapters = client.fetch_series(series_hint.url)
+    if should_stop and should_stop():
+        return {
+            "mangaId": 0,
+            "title": series.title,
+            "remoteChapters": len(chapters),
+            "localChapters": 0,
+            "missingChapters": 0,
+            "enqueued": 0,
+            "stopped": True,
+        }
     manga_id = repository.upsert_manga(
         conn,
         {
@@ -162,6 +197,8 @@ def scan_one_series(
     local_keys = local["chapters"] if local else set()
     missing = repository.find_missing_chapters(conn, manga_id, local_keys)
     for chapter in missing:
+        if should_stop and should_stop():
+            break
         repository.enqueue_download(conn, manga_id, chapter["id"], priority=priority)
 
     repository.update_manga_scan_counts(
@@ -181,7 +218,13 @@ def scan_one_series(
     }
 
 
-def scan_priority_books(conn: sqlite3.Connection, client: AsuraClient, library_root, search_kwargs: dict) -> dict:
+def scan_priority_books(
+    conn: sqlite3.Connection,
+    client: AsuraClient,
+    library_root,
+    search_kwargs: dict,
+    should_stop: Callable[[], bool] | None = None,
+) -> dict:
     """Scan only the current Asura search page with priority=1."""
     scan_library(conn, library_root)
     inventory = repository.get_inventory_map(conn)
@@ -193,6 +236,8 @@ def scan_priority_books(conn: sqlite3.Connection, client: AsuraClient, library_r
     enqueued = 0
     manga_ids: list[int] = []
     for item in items:
+        if should_stop and should_stop():
+            break
         try:
             hint = AsuraSeries(
                 slug=item["slug"],
@@ -202,10 +247,11 @@ def scan_priority_books(conn: sqlite3.Connection, client: AsuraClient, library_r
                 status=item.get("status"),
                 remote_chapter_count=int(item.get("chapter_count") or 0),
             )
-            result_item = scan_one_series(conn, client, hint, inventory, priority=1)
+            result_item = scan_one_series(conn, client, hint, inventory, priority=1, should_stop=should_stop)
             scanned += 1
             enqueued += result_item["enqueued"]
-            manga_ids.append(int(result_item["mangaId"]))
+            if int(result_item["mangaId"]) > 0:
+                manga_ids.append(int(result_item["mangaId"]))
         except Exception as exc:
             repository.log(conn, "error", f"Priority scan failed for {item.get('title', '?')}: {exc}")
 

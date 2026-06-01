@@ -67,6 +67,11 @@ button:not(:disabled):active {
   border: 1px solid #343b48;
 }
 
+.mini-button.danger {
+  border-color: rgba(248, 113, 113, 0.38);
+  color: #fecaca;
+}
+
 .book-actions {
   display: flex;
   gap: 8px;
@@ -639,6 +644,44 @@ textarea:focus {
   white-space: nowrap;
 }
 
+.thread-panel {
+  margin-bottom: 16px;
+}
+
+.thread-grid {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 10px;
+  margin-bottom: 12px;
+}
+
+.thread-list {
+  display: grid;
+  gap: 8px;
+}
+
+.thread-row {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 12px;
+  padding: 10px 12px;
+  border-radius: 8px;
+  background: rgba(255, 255, 255, 0.035);
+  border: 1px solid rgba(255, 255, 255, 0.08);
+}
+
+.thread-row > div {
+  display: grid;
+  gap: 4px;
+  min-width: 0;
+}
+
+.thread-row span {
+  color: #aab3c2;
+  overflow-wrap: anywhere;
+}
+
 
 /* Progress list */
 .progress-list {
@@ -1064,7 +1107,8 @@ td span {
   }
 
   .filter-options,
-  .browse-counts {
+  .browse-counts,
+  .thread-grid {
     grid-template-columns: 1fr;
   }
 }
@@ -1119,7 +1163,15 @@ td span {
     flex-direction: column;
   }
 
+  .thread-row {
+    flex-direction: column;
+  }
+
   .episode-row span {
+    text-align: left;
+  }
+
+  .thread-row span {
     text-align: left;
   }
 

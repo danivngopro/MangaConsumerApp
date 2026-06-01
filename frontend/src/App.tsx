@@ -24,6 +24,7 @@ import {
   BookDetail,
   BrowseFilters,
   BrowseResult,
+  DebugThreads,
   DownloadProgress,
   Summary,
 } from "./api";
@@ -51,6 +52,7 @@ const emptySummary: Summary = {
 export function App() {
   const [authStatus, setAuthStatus] = useState<AuthStatus | null>(null);
   const [summary, setSummary] = useState<Summary>(emptySummary);
+  const [debugThreads, setDebugThreads] = useState<DebugThreads | null>(null);
   const [progress, setProgress] = useState<DownloadProgress[]>([]);
   const [details, setDetails] = useState<Record<number, BookDetail>>({});
   const [modalBookId, setModalBookId] = useState<number | null>(null);
@@ -84,6 +86,7 @@ export function App() {
   const [downloadConcurrency, setDownloadConcurrency] = useState(1);
   const [status, setStatus] = useState("Ready");
   const [loading, setLoading] = useState(false);
+  const [scanLimitFocused, setScanLimitFocused] = useState(false);
 
   async function refresh() {
     const nextAuthStatus = await api.authStatus();
@@ -91,14 +94,19 @@ export function App() {
     if (!nextAuthStatus.authenticated) {
       return;
     }
-    const [nextSummary, nextProgress] = await Promise.all([
+    const [nextSummary, nextProgress, nextThreads] = await Promise.all([
       api.summary(),
       api.progress(),
+      api.debugThreads(),
     ]);
     setSummary(nextSummary);
     setProgress(nextProgress);
+    setDebugThreads(nextThreads);
     setIntervalDays(nextSummary.autoScanEveryDays);
     setDownloadConcurrency(nextSummary.downloadConcurrency);
+    if (!scanLimitFocused) {
+      setScanLimit(nextSummary.limitedScanActiveThreshold);
+    }
     if (!browseFilters) {
       setBrowseFilters(await api.asuraFilters());
     }
@@ -434,6 +442,15 @@ export function App() {
               Stop scan
             </button>
             <button
+              className="secondary danger"
+              onClick={() => runAction("Stop all scans", api.stopAllScans)}
+              disabled={loading}
+              title="Disable top-up and auto scan, request cancellation for every scan producer, and stop new scan enqueueing."
+            >
+              <X size={16} />
+              Stop all scans
+            </button>
+            <button
               className="secondary"
               onClick={() => runAction("Library reindex", api.libraryScan)}
               disabled={loading}
@@ -468,6 +485,8 @@ export function App() {
                 min={1}
                 max={5000}
                 value={scanLimit}
+                onFocus={() => setScanLimitFocused(true)}
+                onBlur={() => setScanLimitFocused(false)}
                 onChange={(event) => setScanLimit(Number(event.target.value))}
               />
               chapters
@@ -546,6 +565,18 @@ export function App() {
           </p>
         </div>
       </section>
+
+      {debugThreads && (
+        <ThreadPanel
+          debugThreads={debugThreads}
+          loading={loading}
+          onStopThread={(threadIdent) =>
+            runAction(`Stop thread ${threadIdent}`, () =>
+              api.stopThread(threadIdent),
+            )
+          }
+        />
+      )}
 
       {/* Collapsible Search Section */}
       <section className="panel search-panel">
@@ -973,6 +1004,104 @@ function TotalProgressBar({ progress }: { progress: DownloadProgress[] }) {
         />
       </div>
     </div>
+  );
+}
+
+function ThreadPanel({
+  debugThreads,
+  loading,
+  onStopThread,
+}: {
+  debugThreads: DebugThreads;
+  loading: boolean;
+  onStopThread: (threadIdent: number) => void;
+}) {
+  const activeWorkers = debugThreads.downloadQueue.workers.filter(
+    (worker) => worker.alive,
+  );
+  const scanThreads = debugThreads.threads.filter((thread) =>
+    /scan|scheduler|import/i.test(thread.name),
+  );
+
+  return (
+    <section className="panel thread-panel">
+      <div className="panel-title">
+        <Activity size={18} />
+        Active Threads
+      </div>
+      <div className="thread-grid">
+        <DetailStat
+          label="Scan stop requested"
+          value={debugThreads.scanStopRequested ? "Yes" : "No"}
+        />
+        <DetailStat
+          label="Scheduler scan"
+          value={debugThreads.scheduler.scanRunning ? "Running" : "Idle"}
+        />
+        <DetailStat
+          label="Top-up"
+          value={debugThreads.settings.limitedScanActive ? "Active" : "Off"}
+        />
+        <DetailStat
+          label="Auto scan days"
+          value={`${debugThreads.settings.autoScanEveryDays}`}
+        />
+      </div>
+      {debugThreads.scheduler.currentScan && (
+        <div className="thread-row">
+          <strong>Current scan</strong>
+          <span>{JSON.stringify(debugThreads.scheduler.currentScan)}</span>
+        </div>
+      )}
+      <div className="thread-list">
+        {activeWorkers.map((worker) => (
+          <div className="thread-row" key={`${worker.name}-${worker.ident}`}>
+            <div>
+              <strong>{worker.name}</strong>
+              <span>
+                {worker.job
+                  ? JSON.stringify(worker.job)
+                  : "Idle download worker"}
+              </span>
+            </div>
+            <button
+              type="button"
+              className="mini-button danger"
+              disabled={loading || worker.ident === null}
+              onClick={() => worker.ident !== null && onStopThread(worker.ident)}
+              title="Ask this download worker to exit after its current chapter or idle loop."
+            >
+              Stop
+            </button>
+          </div>
+        ))}
+        {scanThreads.map((thread) => {
+          const stoppable = thread.ident !== null && /scan|scheduler/i.test(thread.name);
+          return (
+            <div className="thread-row" key={`${thread.name}-${thread.ident}`}>
+              <div>
+                <strong>{thread.name}</strong>
+                <span>{thread.alive ? "Alive" : "Stopped"}</span>
+              </div>
+              {stoppable && (
+                <button
+                  type="button"
+                  className="mini-button danger"
+                  disabled={loading}
+                  onClick={() => onStopThread(thread.ident as number)}
+                  title="Request cancellation for this scan thread. It exits at the next cancellation checkpoint."
+                >
+                  Stop
+                </button>
+              )}
+            </div>
+          );
+        })}
+        {!activeWorkers.length && !scanThreads.length && (
+          <p className="empty">No active scan or download worker threads.</p>
+        )}
+      </div>
+    </section>
   );
 }
 

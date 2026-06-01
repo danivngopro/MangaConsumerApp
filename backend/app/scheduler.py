@@ -20,6 +20,7 @@ class ScanScheduler:
         self._thread: threading.Thread | None = None
         self._scan_lock = threading.Lock()
         self._cancel_scan = threading.Event()
+        self._current_scan: dict | None = None
 
     def start(self) -> None:
         if self._thread and self._thread.is_alive():
@@ -44,6 +45,18 @@ class ScanScheduler:
         repository.log(self.conn, "info", "Scan stop requested")
         return {"stopRequested": True, "scanRunning": self.scan_running}
 
+    def stop_all_scan_work(self) -> dict:
+        self._cancel_scan.set()
+        repository.stop_limited_scan_state(self.conn)
+        repository.set_setting(self.conn, "auto_scan_every_days", "0")
+        repository.log(self.conn, "info", "All scan producers stopped: top-up disabled, auto scan disabled, current scan cancel requested")
+        return {
+            "stopRequested": True,
+            "scanRunning": self.scan_running,
+            "limitedScanActive": False,
+            "autoScanEveryDays": 0,
+        }
+
     @property
     def scan_running(self) -> bool:
         return self._scan_lock.locked()
@@ -54,6 +67,11 @@ class ScanScheduler:
             return None
         self._cancel_scan.clear()
         try:
+            self._current_scan = {
+                "kind": "full" if limit is None else "limited-catalog",
+                "limit": limit,
+                "startedAt": datetime.now(timezone.utc).isoformat(),
+            }
             result = scan_full_catalog(
                 self.conn,
                 self.client,
@@ -68,6 +86,7 @@ class ScanScheduler:
             repository.log(self.conn, "error", f"Full scan failed: {exc}")
             raise
         finally:
+            self._current_scan = None
             self._scan_lock.release()
 
     def start_limited_scan(self, active_threshold: int) -> dict | None:
@@ -114,6 +133,12 @@ class ScanScheduler:
             return None
         try:
             active_threshold, offset = claimed
+            self._current_scan = {
+                "kind": "top-up",
+                "threshold": active_threshold,
+                "offset": offset,
+                "startedAt": datetime.now(timezone.utc).isoformat(),
+            }
             result = scan_limited_catalog_batch(
                 self.conn,
                 self.client,
@@ -140,6 +165,7 @@ class ScanScheduler:
             repository.log(self.conn, "error", f"Limited scan batch failed: {exc}")
             raise
         finally:
+            self._current_scan = None
             self._scan_lock.release()
 
     def _run(self) -> None:
@@ -194,3 +220,16 @@ class ScanScheduler:
             if result.get("stopped") or result.get("exhausted") or not result.get("batchMangaIds"):
                 return last_result
         return last_result
+
+    def debug_state(self) -> dict:
+        scheduler_thread = self._thread
+        return {
+            "scanRunning": self.scan_running,
+            "cancelRequested": self._cancel_scan.is_set(),
+            "currentScan": self._current_scan,
+            "thread": {
+                "name": scheduler_thread.name if scheduler_thread else None,
+                "ident": scheduler_thread.ident if scheduler_thread else None,
+                "alive": scheduler_thread.is_alive() if scheduler_thread else False,
+            },
+        }
