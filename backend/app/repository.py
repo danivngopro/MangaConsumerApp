@@ -61,6 +61,106 @@ def set_json_setting(conn: sqlite3.Connection, key: str, value) -> None:
     set_setting(conn, key, json.dumps(value))
 
 
+def _set_setting_uncommitted(conn: sqlite3.Connection, key: str, value: str) -> None:
+    conn.execute(
+        """
+        INSERT INTO settings(key, value) VALUES (?, ?)
+        ON CONFLICT(key) DO UPDATE SET value = excluded.value
+        """,
+        (key, value),
+    )
+
+
+def active_download_job_count(conn: sqlite3.Connection) -> int:
+    row = conn.execute(
+        """
+        SELECT COUNT(*) AS count
+        FROM jobs
+        WHERE type = 'download'
+          AND status IN ('queued', 'running', 'failed', 'paused', 'auto_paused')
+        """
+    ).fetchone()
+    return int(row["count"] or 0)
+
+
+def start_limited_scan_state(conn: sqlite3.Connection, active_threshold: int) -> bool:
+    with DB_LOCK:
+        conn.execute("BEGIN IMMEDIATE")
+        try:
+            if get_setting(conn, "limited_scan_batch_running", "0") == "1":
+                conn.execute("ROLLBACK")
+                return False
+            _set_setting_uncommitted(conn, "limited_scan_active", "1")
+            _set_setting_uncommitted(conn, "limited_scan_active_threshold", str(max(1, int(active_threshold))))
+            _set_setting_uncommitted(conn, "limited_scan_offset", "0")
+            _set_setting_uncommitted(conn, "limited_scan_batch_manga_ids", "[]")
+            _set_setting_uncommitted(conn, "limited_scan_batch_running", "0")
+            conn.commit()
+            return True
+        except Exception:
+            conn.execute("ROLLBACK")
+            raise
+
+
+def claim_limited_scan_batch(conn: sqlite3.Connection) -> tuple[int, int] | None:
+    with DB_LOCK:
+        conn.execute("BEGIN IMMEDIATE")
+        try:
+            if get_setting(conn, "limited_scan_active", "0") != "1":
+                conn.execute("ROLLBACK")
+                return None
+            if get_setting(conn, "limited_scan_batch_running", "0") == "1":
+                conn.execute("ROLLBACK")
+                return None
+            active_threshold = int(get_setting(conn, "limited_scan_active_threshold", "300") or "300")
+            active_count = active_download_job_count(conn)
+            if active_count >= active_threshold:
+                conn.execute("ROLLBACK")
+                return None
+            offset = int(get_setting(conn, "limited_scan_offset", "0") or "0")
+            _set_setting_uncommitted(conn, "limited_scan_batch_running", "1")
+            conn.commit()
+            return max(1, active_threshold), max(0, offset)
+        except Exception:
+            conn.execute("ROLLBACK")
+            raise
+
+
+def finish_limited_scan_batch(conn: sqlite3.Connection, result: dict) -> None:
+    with DB_LOCK:
+        conn.execute("BEGIN IMMEDIATE")
+        try:
+            _set_setting_uncommitted(conn, "limited_scan_offset", str(result["nextOffset"]))
+            _set_setting_uncommitted(
+                conn,
+                "limited_scan_batch_manga_ids",
+                json.dumps(result["batchMangaIds"]),
+            )
+            _set_setting_uncommitted(conn, "limited_scan_batch_running", "0")
+            if result.get("stopped"):
+                _set_setting_uncommitted(conn, "limited_scan_active", "0")
+                _set_setting_uncommitted(conn, "limited_scan_batch_manga_ids", "[]")
+            elif not result["batchMangaIds"] or result["exhausted"]:
+                _set_setting_uncommitted(conn, "limited_scan_active", "0")
+            conn.commit()
+        except Exception:
+            conn.execute("ROLLBACK")
+            raise
+
+
+def stop_limited_scan_state(conn: sqlite3.Connection) -> None:
+    with DB_LOCK:
+        conn.execute("BEGIN IMMEDIATE")
+        try:
+            _set_setting_uncommitted(conn, "limited_scan_active", "0")
+            _set_setting_uncommitted(conn, "limited_scan_batch_manga_ids", "[]")
+            _set_setting_uncommitted(conn, "limited_scan_batch_running", "0")
+            conn.commit()
+        except Exception:
+            conn.execute("ROLLBACK")
+            raise
+
+
 def upsert_inventory(
     conn: sqlite3.Connection,
     title: str,

@@ -11,6 +11,7 @@ export type Summary = {
   queuePaused: boolean;
   limitedScanActive: boolean;
   scanRunning: boolean;
+  limitedScanActiveThreshold: number;
   libraryRoot: string;
   komgaUrl: string;
   autoScanEveryDays: number;

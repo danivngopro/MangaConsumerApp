@@ -41,6 +41,7 @@ const emptySummary: Summary = {
   queuePaused: false,
   limitedScanActive: false,
   scanRunning: false,
+  limitedScanActiveThreshold: 300,
   libraryRoot: "",
   komgaUrl: "",
   autoScanEveryDays: 0,
@@ -78,7 +79,7 @@ export function App() {
   const [hideExisting, setHideExisting] = useState(true);
   const [hideStringText, setHideStringText] = useState("");
   const [query, setQuery] = useState("");
-  const [scanLimit, setScanLimit] = useState(10);
+  const [scanLimit, setScanLimit] = useState(300);
   const [intervalDays, setIntervalDays] = useState(0);
   const [downloadConcurrency, setDownloadConcurrency] = useState(1);
   const [status, setStatus] = useState("Ready");
@@ -460,28 +461,28 @@ export function App() {
             </button>
           </div>
           <div className="limited-scan">
-            <label title="Keep only N books with missing episodes active at a time. The next N are scanned only after the current batch fully downloads.">
-              Scan first
+            <label title="Keep topping up one next book while unfinished chapter downloads are below this number.">
+              Find next book if active chapters below
               <input
                 type="number"
                 min={1}
-                max={500}
+                max={5000}
                 value={scanLimit}
                 onChange={(event) => setScanLimit(Number(event.target.value))}
               />
-              books
+              chapters
             </label>
             <button
               className="secondary"
               onClick={() =>
-                runAction(`Scan first ${scanLimit} books`, () =>
+                runAction(`Top up below ${scanLimit} active chapters`, () =>
                   api.fullScan(scanLimit),
                 )
               }
               disabled={loading}
-              title="Find this many Asura books with missing episodes, download them fully, then continue with the next batch."
+              title="Start limited top-up mode. It scans one next Asura book at a time until active chapter downloads reach this threshold."
             >
-              Limited scan
+              Start top-up
             </button>
           </div>
           <form className="inline-form" onSubmit={submitSpecific}>
@@ -943,7 +944,7 @@ function TotalProgressBar({ progress }: { progress: DownloadProgress[] }) {
   const totalDone = progress.reduce((sum, p) => sum + p.done, 0);
   const totalItems = progress.reduce((sum, p) => sum + p.total, 0);
   const totalActive = progress.reduce(
-    (sum, p) => sum + p.queued + p.running,
+    (sum, p) => sum + p.queued + p.running + p.paused + p.failed,
     0,
   );
   const percent =

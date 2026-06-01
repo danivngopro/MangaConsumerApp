@@ -102,6 +102,7 @@ def authenticated_user(
 
 @app.on_event("startup")
 def on_startup() -> None:
+    repository.set_setting(conn, "limited_scan_batch_running", "0")
     interrupted = repository.requeue_interrupted_downloads(conn)
     if interrupted:
         repository.log(conn, "info", f"Requeued {interrupted} interrupted downloads after startup")
@@ -160,6 +161,7 @@ def summary(_user: dict = Depends(authenticated_user)) -> dict:
     data["downloadConcurrency"] = download_queue.concurrency
     data["limitedScanActive"] = repository.get_setting(conn, "limited_scan_active", "0") == "1"
     data["scanRunning"] = scan_scheduler.scan_running
+    data["limitedScanActiveThreshold"] = int(repository.get_setting(conn, "limited_scan_active_threshold", "300") or "300")
     return data
 
 
@@ -230,6 +232,9 @@ def get_settings(_user: dict = Depends(authenticated_user)) -> dict:
         "autoScanEveryDays": int(repository.get_setting(conn, "auto_scan_every_days", "0") or "0"),
         "downloadConcurrency": download_queue.concurrency,
         "queuePaused": download_queue.paused,
+        "limitedScanActive": repository.get_setting(conn, "limited_scan_active", "0") == "1",
+        "scanRunning": scan_scheduler.scan_running,
+        "limitedScanActiveThreshold": int(repository.get_setting(conn, "limited_scan_active_threshold", "300") or "300"),
     }
 
 
@@ -290,7 +295,7 @@ def start_specific_priority_scan(payload: SpecificScanRequest, _user: dict = Dep
     def worker() -> None:
         try:
             result = scan_specific(conn, asura_client, settings.library_root, query, priority=2)
-            repository.set_setting(conn, "limited_scan_active", "0")
+            repository.stop_limited_scan_state(conn)
             paused = repository.pause_downloads_except_manga_ids(conn, [int(result["mangaId"])])
             repository.log(conn, "info", f"Asura search add is exclusive: paused {paused} other queued downloads")
         except Exception as exc:
@@ -449,7 +454,7 @@ def start_priority_scan(payload: BrowseSearchRequest, _user: dict = Depends(auth
     def worker() -> None:
         try:
             result = scan_priority_books(conn, asura_client, settings.library_root, search_kwargs)
-            repository.set_setting(conn, "limited_scan_active", "0")
+            repository.stop_limited_scan_state(conn)
             manga_ids = [int(manga_id) for manga_id in result.get("mangaIds", [])]
             paused = repository.pause_downloads_except_manga_ids(conn, manga_ids) if manga_ids else 0
             repository.log(conn, "info", f"Asura search page add is exclusive: paused {paused} other queued downloads")

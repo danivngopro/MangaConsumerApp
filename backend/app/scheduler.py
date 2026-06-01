@@ -40,8 +40,7 @@ class ScanScheduler:
 
     def cancel_current_scan(self) -> dict:
         self._cancel_scan.set()
-        repository.set_setting(self.conn, "limited_scan_active", "0")
-        repository.set_json_setting(self.conn, "limited_scan_batch_manga_ids", [])
+        repository.stop_limited_scan_state(self.conn)
         repository.log(self.conn, "info", "Scan stop requested")
         return {"stopRequested": True, "scanRunning": self.scan_running}
 
@@ -71,42 +70,50 @@ class ScanScheduler:
         finally:
             self._scan_lock.release()
 
-    def start_limited_scan(self, batch_size: int) -> dict | None:
-        batch_size = max(1, int(batch_size))
+    def start_limited_scan(self, active_threshold: int) -> dict | None:
+        active_threshold = max(1, int(active_threshold))
         self._cancel_scan.clear()
-        repository.set_setting(self.conn, "limited_scan_active", "1")
-        repository.set_setting(self.conn, "limited_scan_batch_size", str(batch_size))
-        repository.set_setting(self.conn, "limited_scan_offset", "0")
-        repository.set_json_setting(self.conn, "limited_scan_batch_manga_ids", [])
-        repository.log(self.conn, "info", f"Limited scan started with batch size {batch_size}")
-        return self.run_next_limited_scan_batch()
+        if not repository.start_limited_scan_state(self.conn, active_threshold):
+            repository.log(self.conn, "info", "Limited scan start ignored because a batch is already being selected")
+            return None
+        repository.log(self.conn, "info", f"Limited scan top-up started with active chapter threshold {active_threshold}")
+        return self._top_up_limited_scan()
 
-    def run_next_limited_scan_batch(self) -> dict | None:
+    def run_next_limited_scan_batch(self, claimed: tuple[int, int] | None = None) -> dict | None:
+        if claimed is None:
+            claimed = repository.claim_limited_scan_batch(self.conn)
+            if claimed is None:
+                repository.log(self.conn, "info", "Limited scan batch request ignored because another scheduler already claimed it")
+                return None
         if not self._scan_lock.acquire(blocking=False):
             repository.log(self.conn, "info", "Limited scan batch request ignored because a scan is already running")
+            repository.set_setting(self.conn, "limited_scan_batch_running", "0")
             return None
         try:
-            batch_size = int(repository.get_setting(self.conn, "limited_scan_batch_size", "10") or "10")
-            offset = int(repository.get_setting(self.conn, "limited_scan_offset", "0") or "0")
+            active_threshold, offset = claimed
             result = scan_limited_catalog_batch(
                 self.conn,
                 self.client,
                 self.library_root,
-                batch_size,
+                1,
                 offset,
                 should_stop=self._cancel_scan.is_set,
             )
-            repository.set_setting(self.conn, "limited_scan_offset", str(result["nextOffset"]))
-            repository.set_json_setting(self.conn, "limited_scan_batch_manga_ids", result["batchMangaIds"])
+            repository.finish_limited_scan_batch(self.conn, result)
             if result.get("stopped"):
-                repository.set_setting(self.conn, "limited_scan_active", "0")
-                repository.set_json_setting(self.conn, "limited_scan_batch_manga_ids", [])
                 repository.log(self.conn, "info", "Limited scan stopped by user request")
             elif not result["batchMangaIds"] or result["exhausted"]:
-                repository.set_setting(self.conn, "limited_scan_active", "0")
                 repository.log(self.conn, "info", "Limited scan stopped because the Asura catalog has no more books with downloads in range")
+            else:
+                active_count = repository.active_download_job_count(self.conn)
+                repository.log(
+                    self.conn,
+                    "info",
+                    f"Limited scan top-up added 1 book; active chapters {active_count}/{active_threshold}",
+                )
             return result
         except Exception as exc:
+            repository.set_setting(self.conn, "limited_scan_batch_running", "0")
             repository.log(self.conn, "error", f"Limited scan batch failed: {exc}")
             raise
         finally:
@@ -139,10 +146,28 @@ class ScanScheduler:
     def _continue_limited_scan_if_ready(self) -> None:
         if repository.get_setting(self.conn, "limited_scan_active", "0") != "1":
             return
-        manga_ids = repository.get_json_setting(self.conn, "limited_scan_batch_manga_ids", [])
-        if repository.has_blocking_download_jobs_for_manga_ids(self.conn, manga_ids):
+        threshold = int(repository.get_setting(self.conn, "limited_scan_active_threshold", "300") or "300")
+        active_count = repository.active_download_job_count(self.conn)
+        if active_count >= threshold:
             return
-        if not manga_ids:
-            return
-        repository.log(self.conn, "info", "Limited scan batch fully downloaded; starting next batch")
-        self.run_next_limited_scan_batch()
+        repository.log(
+            self.conn,
+            "info",
+            f"Active chapters below threshold ({active_count}/{threshold}); finding next book",
+        )
+        self._top_up_limited_scan()
+
+    def _top_up_limited_scan(self) -> dict | None:
+        last_result = None
+        while not self._cancel_scan.is_set():
+            threshold = int(repository.get_setting(self.conn, "limited_scan_active_threshold", "300") or "300")
+            active_count = repository.active_download_job_count(self.conn)
+            if active_count >= threshold:
+                return last_result
+            result = self.run_next_limited_scan_batch()
+            if result is None:
+                return last_result
+            last_result = result
+            if result.get("stopped") or result.get("exhausted") or not result.get("batchMangaIds"):
+                return last_result
+        return last_result
