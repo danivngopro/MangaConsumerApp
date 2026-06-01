@@ -45,6 +45,7 @@ def scan_one_series(
     client: AsuraClient,
     series_hint: AsuraSeries,
     inventory: dict[str, dict],
+    priority: int = 0,
 ) -> dict:
     series, chapters = client.fetch_series(series_hint.url)
     manga_id = repository.upsert_manga(
@@ -68,7 +69,7 @@ def scan_one_series(
     local_keys = local["chapters"] if local else set()
     missing = repository.find_missing_chapters(conn, manga_id, local_keys)
     for chapter in missing:
-        repository.enqueue_download(conn, manga_id, chapter["id"])
+        repository.enqueue_download(conn, manga_id, chapter["id"], priority=priority)
 
     repository.update_manga_scan_counts(
         conn,
@@ -85,3 +86,41 @@ def scan_one_series(
         "missingChapters": len(missing),
         "enqueued": len(missing),
     }
+
+
+def scan_priority_books(conn: sqlite3.Connection, client: AsuraClient, library_root, search_kwargs: dict) -> dict:
+    """Fetch all pages of an Asura search and scan each book with priority=1."""
+    scan_library(conn, library_root)
+    inventory = repository.get_inventory_map(conn)
+
+    all_items: list[dict] = []
+    offset = 0
+    while True:
+        result = client.search_series(**{**search_kwargs, "limit": 100, "offset": offset})
+        items = result.get("items") or []
+        all_items.extend(items)
+        total = int(result.get("total") or 0)
+        if not items or offset + 100 >= total:
+            break
+        offset += 100
+
+    scanned = 0
+    enqueued = 0
+    for item in all_items:
+        try:
+            hint = AsuraSeries(
+                slug=item["slug"],
+                title=item["title"],
+                url=item["url"],
+                cover_url=item.get("cover_url"),
+                status=item.get("status"),
+                remote_chapter_count=int(item.get("chapter_count") or 0),
+            )
+            result_item = scan_one_series(conn, client, hint, inventory, priority=1)
+            scanned += 1
+            enqueued += result_item["enqueued"]
+        except Exception as exc:
+            repository.log(conn, "error", f"Priority scan failed for {item.get('title', '?')}: {exc}")
+
+    repository.log(conn, "info", f"Priority scan complete: {scanned} series, {enqueued} downloads queued at priority=1")
+    return {"seriesScanned": scanned, "downloadsQueued": enqueued}

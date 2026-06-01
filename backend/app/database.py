@@ -60,6 +60,7 @@ CREATE TABLE IF NOT EXISTS jobs (
     manga_id INTEGER REFERENCES manga(id) ON DELETE SET NULL,
     chapter_id INTEGER REFERENCES chapters(id) ON DELETE SET NULL,
     attempts INTEGER NOT NULL DEFAULT 0,
+    priority INTEGER NOT NULL DEFAULT 0,
     payload_json TEXT NOT NULL DEFAULT '{}',
     error TEXT,
     created_at TEXT NOT NULL,
@@ -106,13 +107,17 @@ def init_db(conn: sqlite3.Connection) -> None:
 
 
 def migrate_db(conn: sqlite3.Connection) -> None:
-    columns = {row["name"] for row in conn.execute("PRAGMA table_info(manga)").fetchall()}
-    migrations = {
+    manga_columns = {row["name"] for row in conn.execute("PRAGMA table_info(manga)").fetchall()}
+    manga_migrations = {
         "komga_library_id": "ALTER TABLE manga ADD COLUMN komga_library_id TEXT",
         "komga_imported_at": "ALTER TABLE manga ADD COLUMN komga_imported_at TEXT",
         "komga_scanned_at": "ALTER TABLE manga ADD COLUMN komga_scanned_at TEXT",
         "komga_last_error": "ALTER TABLE manga ADD COLUMN komga_last_error TEXT",
     }
-    for column, statement in migrations.items():
-        if column not in columns:
+    for column, statement in manga_migrations.items():
+        if column not in manga_columns:
             conn.execute(statement)
+
+    jobs_columns = {row["name"] for row in conn.execute("PRAGMA table_info(jobs)").fetchall()}
+    if "priority" not in jobs_columns:
+        conn.execute("ALTER TABLE jobs ADD COLUMN priority INTEGER NOT NULL DEFAULT 0")

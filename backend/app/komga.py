@@ -87,6 +87,29 @@ class KomgaClient:
             self.quick_scan_library(str(library["id"]))
         return len(libraries)
 
+    def import_all_books(self, library_root) -> dict:
+        import time
+        from pathlib import Path
+        root = Path(library_root)
+        if not root.exists():
+            return {"scanned": 0, "created": 0, "errors": [f"Library root not found: {root}"]}
+        folders = sorted(f for f in root.iterdir() if f.is_dir())
+        created_count = 0
+        scanned_count = 0
+        errors: list[str] = []
+        for folder in folders:
+            try:
+                library, created = self.ensure_library_for_book(folder.name)
+                if created:
+                    time.sleep(2)
+                self.quick_scan_library(str(library["id"]))
+                if created:
+                    created_count += 1
+                scanned_count += 1
+            except Exception as exc:
+                errors.append(f"{folder.name}: {exc}")
+        return {"scanned": scanned_count, "created": created_count, "errors": errors}
+
     def docker_root_for_book(self, book_title: str) -> str:
         return f"{self.settings.books_root_docker}/{sanitize_filename(book_title)}"
 

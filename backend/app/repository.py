@@ -187,22 +187,25 @@ def find_missing_chapters(conn: sqlite3.Connection, manga_id: int, local_keys: s
     return missing
 
 
-def enqueue_download(conn: sqlite3.Connection, manga_id: int, chapter_id: int) -> None:
+def enqueue_download(conn: sqlite3.Connection, manga_id: int, chapter_id: int, priority: int = 0) -> None:
     existing = conn.execute(
         """
-        SELECT id FROM jobs
+        SELECT id, priority FROM jobs
         WHERE type = 'download' AND chapter_id = ? AND status IN ('queued', 'running')
         """,
         (chapter_id,),
     ).fetchone()
     if existing:
+        if priority > int(existing["priority"] or 0):
+            conn.execute("UPDATE jobs SET priority = ? WHERE id = ?", (priority, existing["id"]))
+            conn.commit()
         return
     conn.execute(
         """
-        INSERT INTO jobs(type, status, manga_id, chapter_id, created_at)
-        VALUES ('download', 'queued', ?, ?, ?)
+        INSERT INTO jobs(type, status, manga_id, chapter_id, priority, created_at)
+        VALUES ('download', 'queued', ?, ?, ?, ?)
         """,
-        (manga_id, chapter_id, utc_now()),
+        (manga_id, chapter_id, priority, utc_now()),
     )
     conn.commit()
 
@@ -213,7 +216,7 @@ def claim_next_download_job(conn: sqlite3.Connection) -> dict | None:
             """
             SELECT * FROM jobs
             WHERE type = 'download' AND status = 'queued'
-            ORDER BY id
+            ORDER BY priority DESC, id ASC
             LIMIT 1
             """
         ).fetchone()
