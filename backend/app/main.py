@@ -16,7 +16,7 @@ from .database import connect, init_db
 from .komga import KomgaClient, KomgaSettings
 from .library import scan_library
 from .queue import DownloadQueue
-from .scanner import scan_specific
+from .scanner import scan_specific, scan_priority_books
 from .scheduler import ScanScheduler
 from .utils import normalize_title
 
@@ -44,6 +44,7 @@ class BrowseSearchRequest(BaseModel):
     sort: str = "latest"
     order: str = "desc"
     minChapters: int = 0
+    maxChapters: int = 0
     limit: int = 24
     offset: int = 0
 
@@ -200,6 +201,7 @@ def asura_search(payload: BrowseSearchRequest, _user: dict = Depends(authenticat
         sort=payload.sort,
         order=payload.order,
         min_chapters=max(0, int(payload.minChapters)),
+        max_chapters=max(0, int(payload.maxChapters)),
         limit=max(1, min(100, int(payload.limit))),
         offset=max(0, int(payload.offset)),
     )
@@ -350,6 +352,44 @@ def import_book_to_komga(manga_id: int, _user: dict = Depends(authenticated_user
         repository.update_komga_status(conn, manga_id, None, False, False, str(exc))
         repository.log(conn, "error", f"Manual Komga import failed for {row['title']}: {exc}")
         raise HTTPException(status_code=502, detail=str(exc)) from exc
+
+
+@app.post("/api/komga/import-all")
+def import_all_books(_user: dict = Depends(authenticated_user)) -> dict:
+    def worker() -> None:
+        try:
+            result = komga_client.import_all_books(settings.library_root)
+            repository.log(conn, "info", f"Import all complete: {result['created']} created, {result['scanned']} scanned")
+        except Exception as exc:
+            repository.log(conn, "error", f"Import all failed: {exc}")
+
+    threading.Thread(target=worker, name="import-all", daemon=True).start()
+    return {"started": True}
+
+
+@app.post("/api/scan/priority")
+def start_priority_scan(payload: BrowseSearchRequest, _user: dict = Depends(authenticated_user)) -> dict:
+    search_kwargs = {
+        "search": payload.search.strip(),
+        "genres": ",".join(payload.genres),
+        "author": payload.author.strip(),
+        "artist": payload.artist.strip(),
+        "status": payload.status,
+        "series_type": payload.type,
+        "sort": payload.sort,
+        "order": payload.order,
+        "min_chapters": max(0, int(payload.minChapters)),
+        "max_chapters": max(0, int(payload.maxChapters)),
+    }
+
+    def worker() -> None:
+        try:
+            scan_priority_books(conn, asura_client, settings.library_root, search_kwargs)
+        except Exception as exc:
+            repository.log(conn, "error", f"Priority scan failed: {exc}")
+
+    threading.Thread(target=worker, name="priority-scan", daemon=True).start()
+    return {"started": True}
 
 
 @app.post("/api/komga/quick-scan-all")

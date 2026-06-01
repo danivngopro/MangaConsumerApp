@@ -89,6 +89,7 @@ class AsuraClient:
         sort: str = "latest",
         order: str = "desc",
         min_chapters: int = 0,
+        max_chapters: int = 0,
         limit: int = 24,
         offset: int = 0,
     ) -> dict:
@@ -112,9 +113,13 @@ class AsuraClient:
             params["type"] = series_type
         if min_chapters > 0:
             params["min_chapters"] = min_chapters
+        if max_chapters > 0:
+            params["max_chapters"] = max_chapters
 
         payload = self._api_get("/series", params)
         items = payload.get("data") or []
+        if max_chapters > 0:
+            items = [item for item in items if int(item.get("chapter_count") or 0) <= max_chapters]
         normalized_items = []
         for item in items:
             title = fix_mojibake(str(item.get("title") or "Untitled"))

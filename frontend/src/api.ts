@@ -101,6 +101,7 @@ export type BrowseSearchPayload = {
   sort: string;
   order: string;
   minChapters: number;
+  maxChapters: number;
   limit: number;
   offset: number;
 };
@@ -235,8 +236,13 @@ export const api = {
   quickScanAll: () =>
     request<{ scanned: boolean; libraryCount: number; deep: boolean }>(
       "/api/komga/quick-scan-all",
-      {
-        method: "POST",
-      },
+      { method: "POST" },
     ),
+  importAllBooks: () =>
+    request<{ started: boolean }>("/api/komga/import-all", { method: "POST" }),
+  priorityScan: (payload: BrowseSearchPayload) =>
+    request<{ started: boolean }>("/api/scan/priority", {
+      method: "POST",
+      body: JSON.stringify(payload),
+    }),
 };
