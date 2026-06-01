@@ -72,6 +72,29 @@ class ScanScheduler:
 
     def start_limited_scan(self, active_threshold: int) -> dict | None:
         active_threshold = max(1, int(active_threshold))
+        active_count = repository.active_download_job_count(self.conn)
+        if active_count >= active_threshold:
+            self._cancel_scan.set()
+            repository.stop_limited_scan_state(self.conn)
+            repository.log(
+                self.conn,
+                "info",
+                f"Limited scan top-up not started; active chapters already {active_count}/{active_threshold}",
+            )
+            return {
+                "activeChapters": active_count,
+                "threshold": active_threshold,
+                "started": False,
+            }
+        if self.scan_running:
+            self._cancel_scan.set()
+            repository.stop_limited_scan_state(self.conn)
+            repository.log(
+                self.conn,
+                "info",
+                "Limited scan top-up request stopped the current scan; retry after it finishes",
+            )
+            return None
         self._cancel_scan.clear()
         if not repository.start_limited_scan_state(self.conn, active_threshold):
             repository.log(self.conn, "info", "Limited scan start ignored because a batch is already being selected")
