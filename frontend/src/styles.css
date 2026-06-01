@@ -86,6 +86,15 @@ button:not(:disabled):active {
   border: 1px solid #343b48;
 }
 
+.secondary.danger {
+  border-color: rgba(248, 113, 113, 0.38);
+  color: #fecaca;
+}
+
+.secondary.danger:not(:disabled):hover {
+  background: rgba(248, 113, 113, 0.14);
+}
+
 .app-shell {
   width: min(1480px, calc(100% - 32px));
   margin: 0 auto;
@@ -617,6 +626,13 @@ textarea:focus {
   gap: 6px;
 }
 
+.progress-queue-actions {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+  flex-wrap: wrap;
+}
+
 .progress-count {
   color: #9aa5b5;
   font-size: 13px;
@@ -1066,6 +1082,7 @@ td span {
   .inline-form,
   .settings-form,
   .limited-scan,
+  .progress-queue-actions,
   .search-results-header {
     align-items: stretch;
     flex-direction: column;

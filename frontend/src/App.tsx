@@ -13,6 +13,7 @@ import {
   Search,
   Server,
   Settings,
+  Trash2,
   UploadCloud,
   X,
   Zap,
@@ -239,6 +240,25 @@ export function App() {
     }
   }
 
+  async function deleteQueuedDownloads() {
+    const ok = window.confirm(
+      "Remove all currently queued downloads? Running, completed, failed, and paused downloads are not removed.",
+    );
+    if (!ok) return;
+    await runAction("Remove queued downloads", api.deleteQueuedDownloads);
+  }
+
+  async function deleteZeroPercentQueuedDownloads() {
+    const ok = window.confirm(
+      "Remove queued downloads for books that are still at 0% and have not started? Running, completed, failed, and paused downloads are not removed.",
+    );
+    if (!ok) return;
+    await runAction(
+      "Remove 0% queued downloads",
+      api.deleteZeroPercentQueuedDownloads,
+    );
+  }
+
   if (!authStatus) {
     return (
       <main className="app-shell">
@@ -270,12 +290,29 @@ export function App() {
       return false;
     return true;
   });
+  const queuedDownloadCount = progress.reduce(
+    (sum, item) => sum + item.queued,
+    0,
+  );
+  const zeroPercentQueuedCount = progress.reduce((sum, item) => {
+    if (
+      item.queued > 0 &&
+      item.percent === 0 &&
+      item.running === 0 &&
+      item.done === 0 &&
+      item.failed === 0 &&
+      item.paused === 0
+    ) {
+      return sum + item.queued;
+    }
+    return sum;
+  }, 0);
 
   return (
     <main className="app-shell">
       <header className="topbar">
         <div className="brand-block">
-          <img className="site-mark" src="../public/site-icon2.png" alt="" />
+          <img className="site-mark" src="/site-icon2.png" alt="" />
           <div>
             <h1>Manga Crawler</h1>
             <p>{summary.libraryRoot || "Backend not connected"}</p>
@@ -801,6 +838,28 @@ export function App() {
               </button>
             ))}
           </div>
+          <div className="progress-queue-actions">
+            <button
+              type="button"
+              className="secondary danger"
+              onClick={deleteQueuedDownloads}
+              disabled={loading || queuedDownloadCount === 0}
+              title="Remove all queued download jobs. Running, completed, failed, and paused downloads stay untouched."
+            >
+              <Trash2 size={15} />
+              Clear queued
+            </button>
+            <button
+              type="button"
+              className="secondary danger"
+              onClick={deleteZeroPercentQueuedDownloads}
+              disabled={loading || zeroPercentQueuedCount === 0}
+              title="Remove queued download jobs only for books still at 0% with no started download history."
+            >
+              <Trash2 size={15} />
+              Clear 0%
+            </button>
+          </div>
           <span className="progress-count">
             {filteredProgress.length} / {progress.length}
           </span>
@@ -1264,7 +1323,7 @@ function AuthScreen({
   return (
     <main className="auth-shell">
       <form className="auth-panel" onSubmit={submit}>
-        <img className="auth-logo" src="../public/site-icon2.png" alt="" />
+        <img className="auth-logo" src="/site-icon2.png" alt="" />
         <div className="auth-icon">
           <Lock size={22} />
         </div>

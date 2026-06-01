@@ -215,6 +215,12 @@ export const api = {
     request<{ queuePaused: boolean }>("/api/queue/pause", { method: "POST" }),
   resumeQueue: () =>
     request<{ queuePaused: boolean }>("/api/queue/resume", { method: "POST" }),
+  deleteQueuedDownloads: () =>
+    request<{ removed: number }>("/api/queue/queued", { method: "DELETE" }),
+  deleteZeroPercentQueuedDownloads: () =>
+    request<{ removed: number }>("/api/queue/queued-zero-percent", {
+      method: "DELETE",
+    }),
   pauseBookDownloads: (mangaId: number) =>
     request<{ paused: number; mangaId: number }>(`/api/books/${mangaId}/downloads/pause`, {
       method: "POST",

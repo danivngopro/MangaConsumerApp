@@ -442,6 +442,45 @@ def resume_downloads_for_manga(conn: sqlite3.Connection, manga_id: int) -> int:
         return cursor.rowcount
 
 
+def delete_queued_downloads(conn: sqlite3.Connection, zero_percent_only: bool = False) -> int:
+    with DB_LOCK:
+        if zero_percent_only:
+            cursor = conn.execute(
+                """
+                DELETE FROM jobs
+                WHERE type = 'download'
+                  AND status = 'queued'
+                  AND COALESCE(manga_id, 0) IN (
+                    SELECT m.id
+                    FROM manga m
+                    WHERE COALESCE(m.local_chapter_count, 0) = 0
+                      AND NOT EXISTS (
+                        SELECT 1
+                        FROM chapters c
+                        WHERE c.manga_id = m.id
+                          AND c.is_downloaded = 1
+                      )
+                      AND NOT EXISTS (
+                        SELECT 1
+                        FROM jobs started
+                        WHERE started.type = 'download'
+                          AND started.manga_id = m.id
+                          AND started.status IN ('running', 'done', 'failed', 'paused', 'auto_paused')
+                      )
+                  )
+                """
+            )
+        else:
+            cursor = conn.execute(
+                """
+                DELETE FROM jobs
+                WHERE type = 'download' AND status = 'queued'
+                """
+            )
+        conn.commit()
+        return cursor.rowcount
+
+
 def retry_failed_downloads(conn: sqlite3.Connection, manga_id: int | None = None) -> int:
     with DB_LOCK:
         if manga_id is None:

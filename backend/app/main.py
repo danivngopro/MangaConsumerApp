@@ -326,6 +326,20 @@ def resume_queue(_user: dict = Depends(authenticated_user)) -> dict:
     return {"queuePaused": False}
 
 
+@app.delete("/api/queue/queued")
+def delete_queued_downloads(_user: dict = Depends(authenticated_user)) -> dict:
+    count = repository.delete_queued_downloads(conn)
+    repository.log(conn, "info", f"Removed {count} queued download jobs")
+    return {"removed": count}
+
+
+@app.delete("/api/queue/queued-zero-percent")
+def delete_zero_percent_queued_downloads(_user: dict = Depends(authenticated_user)) -> dict:
+    count = repository.delete_queued_downloads(conn, zero_percent_only=True)
+    repository.log(conn, "info", f"Removed {count} zero-percent queued download jobs")
+    return {"removed": count}
+
+
 @app.post("/api/books/{manga_id}/downloads/pause")
 def pause_book_downloads(manga_id: int, _user: dict = Depends(authenticated_user)) -> dict:
     row = conn.execute("SELECT title FROM manga WHERE id = ?", (manga_id,)).fetchone()
