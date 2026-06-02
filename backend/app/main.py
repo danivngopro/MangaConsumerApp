@@ -198,6 +198,11 @@ def jobs(_user: dict = Depends(authenticated_user)) -> list[dict]:
     return repository.list_jobs(conn)
 
 
+@app.get("/api/jobs/failed")
+def failed_jobs(_user: dict = Depends(authenticated_user)) -> list[dict]:
+    return repository.list_failed_download_jobs(conn)
+
+
 @app.get("/api/debug/threads")
 def debug_threads(_user: dict = Depends(authenticated_user)) -> dict:
     threads = []

@@ -797,6 +797,7 @@ def list_jobs(conn: sqlite3.Connection, limit: int = 100) -> list[dict]:
             SELECT
                 j.*,
                 m.title AS manga_title,
+                c.chapter_key,
                 c.label AS chapter_label
             FROM jobs j
             LEFT JOIN manga m ON m.id = j.manga_id
@@ -805,6 +806,26 @@ def list_jobs(conn: sqlite3.Connection, limit: int = 100) -> list[dict]:
             LIMIT ?
             """,
             (limit,),
+        ).fetchall()
+    ]
+
+
+def list_failed_download_jobs(conn: sqlite3.Connection) -> list[dict]:
+    return [
+        clean_row(row)
+        for row in conn.execute(
+            """
+            SELECT
+                j.*,
+                m.title AS manga_title,
+                c.chapter_key,
+                c.label AS chapter_label
+            FROM jobs j
+            LEFT JOIN manga m ON m.id = j.manga_id
+            LEFT JOIN chapters c ON c.id = j.chapter_id
+            WHERE j.type = 'download' AND j.status = 'failed'
+            ORDER BY COALESCE(j.finished_at, j.started_at, j.created_at) DESC, j.id DESC
+            """
         ).fetchall()
     ]
 

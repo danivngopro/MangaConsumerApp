@@ -26,6 +26,7 @@ import {
   BrowseResult,
   DebugThreads,
   DownloadProgress,
+  Job,
   Summary,
 } from "./api";
 
@@ -58,6 +59,9 @@ export function App() {
   const [progress, setProgress] = useState<DownloadProgress[]>([]);
   const [details, setDetails] = useState<Record<number, BookDetail>>({});
   const [modalBookId, setModalBookId] = useState<number | null>(null);
+  const [failedModalOpen, setFailedModalOpen] = useState(false);
+  const [failedJobs, setFailedJobs] = useState<Job[]>([]);
+  const [failedJobsLoading, setFailedJobsLoading] = useState(false);
   const [browseFilters, setBrowseFilters] = useState<BrowseFilters | null>(
     null,
   );
@@ -244,6 +248,19 @@ export function App() {
   async function refreshBook(bookId: number) {
     const detail = await api.bookDetail(bookId);
     setDetails((current) => ({ ...current, [bookId]: detail }));
+  }
+
+  async function openFailedChapters() {
+    if (summary.failedJobs === 0) return;
+    setFailedModalOpen(true);
+    setFailedJobsLoading(true);
+    try {
+      setFailedJobs(await api.failedJobs());
+    } catch (error) {
+      setStatus(error instanceof Error ? error.message : String(error));
+    } finally {
+      setFailedJobsLoading(false);
+    }
   }
 
   async function pauseOrResumeBook(
@@ -439,6 +456,9 @@ export function App() {
           label="Failed"
           value={summary.failedJobs}
           tone={summary.failedJobs ? "warn" : "normal"}
+          onClick={openFailedChapters}
+          disabled={summary.failedJobs === 0}
+          title="Show failed chapter download details."
         />
         <Metric
           icon={<Activity />}
@@ -1018,6 +1038,14 @@ export function App() {
           }
         />
       )}
+
+      {failedModalOpen && (
+        <FailedChaptersModal
+          jobs={failedJobs}
+          loading={failedJobsLoading}
+          onClose={() => setFailedModalOpen(false)}
+        />
+      )}
     </main>
   );
 }
@@ -1407,6 +1435,61 @@ function BookDetailModal({
   );
 }
 
+function FailedChaptersModal({
+  jobs,
+  loading,
+  onClose,
+}: {
+  jobs: Job[];
+  loading: boolean;
+  onClose: () => void;
+}) {
+  useEffect(() => {
+    const handler = (e: KeyboardEvent) => {
+      if (e.key === "Escape") onClose();
+    };
+    document.addEventListener("keydown", handler);
+    return () => document.removeEventListener("keydown", handler);
+  }, [onClose]);
+
+  return (
+    <div className="modal-backdrop" onClick={onClose}>
+      <div className="modal-panel failed-modal" onClick={(e) => e.stopPropagation()}>
+        <div className="modal-header">
+          <div>
+            <h2>Failed chapters</h2>
+            <p>{jobs.length.toLocaleString()} failed download jobs</p>
+          </div>
+          <button
+            className="secondary"
+            onClick={onClose}
+            title="Close failed chapter details."
+          >
+            <X size={16} /> Close
+          </button>
+        </div>
+
+        <div className="failed-chapter-list">
+          {loading && <p className="empty">Loading failed chapters...</p>}
+          {!loading &&
+            jobs.map((job) => (
+              <div className="failed-chapter-row" key={job.id}>
+                <div>
+                  <strong>{job.manga_title ?? "Unknown book"}</strong>
+                  <span>Chapter {job.chapter_key ?? job.chapter_label ?? "unknown"}</span>
+                </div>
+                <p>{job.error || "No failure reason recorded."}</p>
+              </div>
+            ))}
+          {!loading && jobs.length === 0 && (
+            <p className="empty">No failed chapters found.</p>
+          )}
+        </div>
+      </div>
+    </div>
+  );
+}
+
 function BrowseResultRow({
   item,
   loading,
@@ -1576,18 +1659,44 @@ function Metric({
   value,
   suffix,
   tone = "normal",
+  onClick,
+  disabled = false,
+  title,
 }: {
   icon: JSX.Element;
   label: string;
   value: number;
   suffix?: string;
   tone?: "normal" | "caution" | "warn";
+  onClick?: () => void;
+  disabled?: boolean;
+  title?: string;
 }) {
-  return (
-    <div className={`metric ${tone}`}>
+  const content = (
+    <>
       <div className="metric-icon">{icon}</div>
       <span>{label}</span>
       <strong>{value.toLocaleString()}{suffix}</strong>
+    </>
+  );
+
+  if (onClick) {
+    return (
+      <button
+        type="button"
+        className={`metric metric-button ${tone}`}
+        onClick={onClick}
+        disabled={disabled}
+        title={title}
+      >
+        {content}
+      </button>
+    );
+  }
+
+  return (
+    <div className={`metric ${tone}`}>
+      {content}
     </div>
   );
 }

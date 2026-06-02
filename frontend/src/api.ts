@@ -63,6 +63,7 @@ export type Job = {
   started_at: string | null;
   finished_at: string | null;
   manga_title: string | null;
+  chapter_key: string | null;
   chapter_label: string | null;
 };
 
@@ -217,6 +218,7 @@ export const api = {
   books: () => request<Book[]>("/api/books"),
   bookDetail: (mangaId: number) => request<BookDetail>(`/api/books/${mangaId}`),
   jobs: () => request<Job[]>("/api/jobs"),
+  failedJobs: () => request<Job[]>("/api/jobs/failed"),
   progress: () => request<DownloadProgress[]>("/api/progress"),
   asuraFilters: () => request<BrowseFilters>("/api/asura/filters"),
   asuraSearch: (payload: BrowseSearchPayload) =>

@@ -245,6 +245,23 @@ button:not(:disabled):active {
   padding: 16px;
   display: grid;
   gap: 6px;
+  text-align: left;
+}
+
+.metric-button {
+  width: 100%;
+  color: inherit;
+  font: inherit;
+  cursor: pointer;
+}
+
+.metric-button:not(:disabled):hover {
+  border-color: rgba(248, 113, 113, 0.35);
+  background: rgba(34, 24, 30, 0.94);
+}
+
+.metric-button:disabled {
+  cursor: default;
 }
 
 .metric-icon {
@@ -888,6 +905,47 @@ textarea:focus {
 
 .episode-row.new {
   border-color: rgba(168, 85, 247, 0.25);
+}
+
+.failed-modal {
+  width: min(820px, 100%);
+}
+
+.failed-chapter-list {
+  display: grid;
+  gap: 10px;
+  max-height: 560px;
+  overflow-y: auto;
+  padding-right: 4px;
+}
+
+.failed-chapter-row {
+  display: grid;
+  grid-template-columns: minmax(180px, 0.45fr) minmax(0, 1fr);
+  gap: 14px;
+  border-radius: 8px;
+  background: rgba(255, 255, 255, 0.035);
+  border: 1px solid rgba(248, 113, 113, 0.2);
+  padding: 12px;
+}
+
+.failed-chapter-row strong,
+.failed-chapter-row span {
+  display: block;
+}
+
+.failed-chapter-row span {
+  margin-top: 4px;
+  color: #fca5a5;
+  font-size: 12px;
+}
+
+.failed-chapter-row p {
+  margin: 0;
+  color: #d6dde8;
+  font-size: 13px;
+  line-height: 1.45;
+  overflow-wrap: anywhere;
 }
 
 .detail-stat {
