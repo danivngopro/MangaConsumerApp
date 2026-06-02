@@ -5,6 +5,7 @@ import {
   ChevronDown,
   Clock,
   Download,
+  HardDrive,
   Pause,
   RefreshCw,
   Search,
@@ -112,6 +113,9 @@ export function DashboardPage({ summary, progress, debugThreads, loading, status
           suffix="%"
           tone={summary.cpuPercent >= 85 ? "warn" : summary.cpuPercent >= 60 ? "caution" : "normal"}
         />
+        {summary.diskTotal > 0 && (
+          <DiskMetric total={summary.diskTotal} free={summary.diskFree} />
+        )}
       </div>
 
       {/* Total progress bar */}
@@ -290,6 +294,45 @@ export function DashboardPage({ summary, progress, debugThreads, loading, status
         />
       )}
     </>
+  );
+}
+
+/* ── Helpers ─────────────────────────────────────────────────── */
+function fmtBytes(bytes: number): string {
+  if (bytes >= 1e12) return `${(bytes / 1e12).toFixed(1)} TB`;
+  if (bytes >= 1e9)  return `${(bytes / 1e9).toFixed(1)} GB`;
+  if (bytes >= 1e6)  return `${(bytes / 1e6).toFixed(0)} MB`;
+  return `${bytes} B`;
+}
+
+/* ── Disk metric ──────────────────────────────────────────────── */
+function DiskMetric({ total, free }: { total: number; free: number }) {
+  const usedPct = total > 0 ? Math.round(((total - free) / total) * 100) : 0;
+  const tone = usedPct >= 90 ? "warn" : usedPct >= 75 ? "caution" : "normal";
+  return (
+    <div className={`metric ${tone}`} style={{ gap: 6 }}>
+      <div className="metric-icon"><HardDrive size={14} /></div>
+      <span className="metric-label">Storage Free</span>
+      <strong className="metric-value" style={{ fontSize: 20 }}>{fmtBytes(free)}</strong>
+      <div style={{ marginTop: 2 }}>
+        <div className="track">
+          <div
+            className="track-fill"
+            style={{
+              width: `${usedPct}%`,
+              background: usedPct >= 90
+                ? "linear-gradient(90deg,var(--red),#f87171)"
+                : usedPct >= 75
+                ? "linear-gradient(90deg,var(--orange),#fb923c)"
+                : undefined,
+            }}
+          />
+        </div>
+        <span style={{ fontSize: 11, color: "var(--text-3)", marginTop: 3, display: "block" }}>
+          {usedPct}% used · {fmtBytes(total)} total
+        </span>
+      </div>
+    </div>
   );
 }
 

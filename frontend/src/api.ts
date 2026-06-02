@@ -21,6 +21,9 @@ export type Summary = {
   imageDownloadWorkers: number;
   readerEngine: "playwright" | "selenium";
   cpuPercent: number;
+  diskTotal: number;
+  diskFree: number;
+  diskUsed: number;
 };
 
 export type Book = {

@@ -3,6 +3,8 @@ from __future__ import annotations
 import threading
 from pathlib import Path
 
+import shutil
+
 import psutil
 from fastapi import Cookie, Depends, FastAPI, HTTPException, Response
 from fastapi.middleware.cors import CORSMiddleware
@@ -206,6 +208,15 @@ def logout(response: Response, token: str | None = Cookie(default=None, alias=au
 def summary(_user: dict = Depends(authenticated_user)) -> dict:
     data = repository.summary(conn)
     data["cpuPercent"] = psutil.cpu_percent(interval=None)
+    try:
+        du = shutil.disk_usage(str(settings.library_root))
+        data["diskTotal"] = du.total
+        data["diskFree"] = du.free
+        data["diskUsed"] = du.used
+    except Exception:
+        data["diskTotal"] = 0
+        data["diskFree"] = 0
+        data["diskUsed"] = 0
     data["queuePaused"] = download_queue.paused
     data["libraryRoot"] = str(settings.library_root)
     data["komgaUrl"] = settings.komga_url
