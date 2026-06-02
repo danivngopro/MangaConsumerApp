@@ -196,7 +196,7 @@ class ScanScheduler:
             if result.get("stopped"):
                 repository.log(self.conn, "info", "Limited scan stopped by user request")
             elif not result["batchMangaIds"] or result["exhausted"]:
-                repository.log(self.conn, "info", "Limited scan stopped because the Asura catalog has no more books with downloads in range")
+                repository.log(self.conn, "info", "Limited scan found no new chapters; top-up remains armed")
             else:
                 active_count = repository.active_download_job_count(self.conn)
                 repository.log(

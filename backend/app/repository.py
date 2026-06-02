@@ -162,7 +162,8 @@ def finish_limited_scan_batch(conn: sqlite3.Connection, result: dict) -> None:
                 _set_setting_uncommitted(conn, "limited_scan_batch_manga_ids", "[]")
                 _set_setting_uncommitted(conn, "limited_scan_pending_manga_id", "0")
             elif not result["batchMangaIds"] or result["exhausted"]:
-                _set_setting_uncommitted(conn, "limited_scan_active", "0")
+                _set_setting_uncommitted(conn, "limited_scan_offset", "0")
+                _set_setting_uncommitted(conn, "limited_scan_batch_manga_ids", "[]")
                 _set_setting_uncommitted(conn, "limited_scan_pending_manga_id", "0")
             conn.commit()
         except Exception:
