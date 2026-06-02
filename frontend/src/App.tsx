@@ -48,6 +48,9 @@ const emptySummary: Summary = {
   imageDownloadWorkers: 4,
   readerEngine: "playwright",
   cpuPercent: 0,
+  diskTotal: 0,
+  diskFree: 0,
+  diskUsed: 0,
 };
 
 export type SharedProps = {
