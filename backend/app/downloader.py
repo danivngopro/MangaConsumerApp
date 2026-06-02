@@ -4,6 +4,7 @@ import os
 import re
 import shutil
 import sqlite3
+import threading
 import time
 import zipfile
 from concurrent.futures import ThreadPoolExecutor, as_completed
@@ -21,6 +22,32 @@ from . import repository
 from .asura import USER_AGENT
 from .utils import sanitize_filename
 
+IMAGE_REQUEST_MIN_INTERVAL_SECONDS = 0.25
+IMAGE_DOWNLOAD_MAX_ATTEMPTS = 5
+IMAGE_RETRY_STATUS_CODES = {429, 500, 502, 503, 504}
+_IMAGE_REQUEST_LOCK = threading.Lock()
+_last_image_request_at = 0.0
+
+
+def _pace_image_request() -> None:
+    global _last_image_request_at
+    with _IMAGE_REQUEST_LOCK:
+        elapsed = time.monotonic() - _last_image_request_at
+        if elapsed < IMAGE_REQUEST_MIN_INTERVAL_SECONDS:
+            time.sleep(IMAGE_REQUEST_MIN_INTERVAL_SECONDS - elapsed)
+        _last_image_request_at = time.monotonic()
+
+
+def _retry_delay(attempt: int, response: requests.Response | None) -> float:
+    if response is not None:
+        retry_after = response.headers.get("Retry-After")
+        if retry_after:
+            try:
+                return max(0.5, min(30.0, float(retry_after)))
+            except ValueError:
+                pass
+    return min(30.0, 1.5 * (2 ** max(0, attempt - 1)))
+
 
 def _download_images_parallel(
     image_urls: list[str],
@@ -33,17 +60,33 @@ def _download_images_parallel(
     session.headers.update({"User-Agent": USER_AGENT, "Referer": chapter_url})
 
     def download_single_image(index: int, url: str) -> Path | None:
+        extension_match = re.search(r"\.(\w+)(?:[?&].*)?$", url)
+        extension = f".{extension_match.group(1).lower()}" if extension_match else ".jpg"
+        image_path = temp_dir / f"{index:03d}{extension}"
+        last_error: Exception | None = None
         try:
-            extension_match = re.search(r"\.(\w+)(?:[?&].*)?$", url)
-            extension = f".{extension_match.group(1).lower()}" if extension_match else ".jpg"
-            image_path = temp_dir / f"{index:03d}{extension}"
-            response = session.get(url, stream=True, timeout=60)
-            response.raise_for_status()
-            with image_path.open("wb") as file:
-                for chunk in response.iter_content(8192):
-                    if chunk:
-                        file.write(chunk)
-            return image_path
+            for attempt in range(1, IMAGE_DOWNLOAD_MAX_ATTEMPTS + 1):
+                try:
+                    _pace_image_request()
+                    response = session.get(url, stream=True, timeout=60)
+                    response.raise_for_status()
+                    with image_path.open("wb") as file:
+                        for chunk in response.iter_content(8192):
+                            if chunk:
+                                file.write(chunk)
+                    return image_path
+                except requests.HTTPError as e:
+                    last_error = e
+                    status_code = e.response.status_code if e.response is not None else 0
+                    if status_code not in IMAGE_RETRY_STATUS_CODES or attempt >= IMAGE_DOWNLOAD_MAX_ATTEMPTS:
+                        break
+                    time.sleep(_retry_delay(attempt, e.response))
+                except requests.RequestException as e:
+                    last_error = e
+                    if attempt >= IMAGE_DOWNLOAD_MAX_ATTEMPTS:
+                        break
+                    time.sleep(_retry_delay(attempt, None))
+            raise last_error or RuntimeError("unknown image download error")
         except Exception as e:
             raise RuntimeError(f"Failed to download image {index}: {e}")
 

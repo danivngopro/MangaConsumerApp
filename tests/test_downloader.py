@@ -5,15 +5,21 @@ import zipfile
 from pathlib import Path
 from unittest.mock import patch
 
+import requests
+
 from backend.app.database import init_db
-from backend.app.downloader import download_chapter
+from backend.app.downloader import _download_images_parallel, download_chapter
 
 
 class FakeResponse:
-    def __init__(self, payload: bytes) -> None:
+    def __init__(self, payload: bytes, status_code: int = 200) -> None:
         self.payload = payload
+        self.status_code = status_code
+        self.headers = {}
 
     def raise_for_status(self) -> None:
+        if self.status_code >= 400:
+            raise requests.HTTPError(f"{self.status_code} Client Error", response=self)
         return None
 
     def iter_content(self, chunk_size: int):
@@ -26,6 +32,15 @@ class FakeSession:
 
     def get(self, url: str, stream: bool, timeout: int):
         return FakeResponse(url.encode("utf-8"))
+
+
+class SequencedSession:
+    def __init__(self, responses: list[FakeResponse]) -> None:
+        self.headers = {}
+        self.responses = responses
+
+    def get(self, url: str, stream: bool, timeout: int):
+        return self.responses.pop(0)
 
 
 class DownloaderTests(unittest.TestCase):
@@ -108,6 +123,25 @@ class DownloaderTests(unittest.TestCase):
                     extract_image_urls=lambda url: ["https://asura-images.test/page-1.jpg"],
                     image_download_workers=2,
                 )
+
+    def test_image_download_retries_429_before_failing_chapter(self):
+        session = SequencedSession([
+            FakeResponse(b"rate-limited", status_code=429),
+            FakeResponse(b"page-ok"),
+        ])
+        with tempfile.TemporaryDirectory() as tmp:
+            with patch("backend.app.downloader.requests.Session", return_value=session):
+                with patch("backend.app.downloader.time.sleep") as sleep:
+                    paths = _download_images_parallel(
+                        ["https://asura-images.test/page-1.webp"],
+                        Path(tmp),
+                        "https://example.test/chapter/1",
+                        max_workers=1,
+                    )
+                    self.assertEqual(len(paths), 1)
+                    self.assertEqual(paths[0].read_bytes(), b"page-ok")
+
+        sleep.assert_called()
 
 
 if __name__ == "__main__":
