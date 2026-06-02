@@ -3,6 +3,7 @@ from __future__ import annotations
 import threading
 from pathlib import Path
 
+import psutil
 from fastapi import Cookie, Depends, FastAPI, HTTPException, Response
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
@@ -166,6 +167,7 @@ def logout(response: Response, token: str | None = Cookie(default=None, alias=au
 @app.get("/api/summary")
 def summary(_user: dict = Depends(authenticated_user)) -> dict:
     data = repository.summary(conn)
+    data["cpuPercent"] = psutil.cpu_percent(interval=None)
     data["queuePaused"] = download_queue.paused
     data["libraryRoot"] = str(settings.library_root)
     data["komgaUrl"] = settings.komga_url

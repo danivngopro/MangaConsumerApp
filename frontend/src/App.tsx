@@ -48,6 +48,7 @@ const emptySummary: Summary = {
   komgaUrl: "",
   autoScanEveryDays: 0,
   downloadConcurrency: 1,
+  cpuPercent: 0,
 };
 
 export function App() {
@@ -438,6 +439,19 @@ export function App() {
           label="Failed"
           value={summary.failedJobs}
           tone={summary.failedJobs ? "warn" : "normal"}
+        />
+        <Metric
+          icon={<Activity />}
+          label="CPU usage"
+          value={Math.round(summary.cpuPercent)}
+          suffix="%"
+          tone={
+            summary.cpuPercent >= 85
+              ? "warn"
+              : summary.cpuPercent >= 60
+                ? "caution"
+                : "normal"
+          }
         />
       </section>
 
@@ -1560,18 +1574,20 @@ function Metric({
   icon,
   label,
   value,
+  suffix,
   tone = "normal",
 }: {
   icon: JSX.Element;
   label: string;
   value: number;
-  tone?: "normal" | "warn";
+  suffix?: string;
+  tone?: "normal" | "caution" | "warn";
 }) {
   return (
     <div className={`metric ${tone}`}>
       <div className="metric-icon">{icon}</div>
       <span>{label}</span>
-      <strong>{value.toLocaleString()}</strong>
+      <strong>{value.toLocaleString()}{suffix}</strong>
     </div>
   );
 }

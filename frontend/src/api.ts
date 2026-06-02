@@ -17,6 +17,7 @@ export type Summary = {
   komgaUrl: string;
   autoScanEveryDays: number;
   downloadConcurrency: number;
+  cpuPercent: number;
 };
 
 export type Book = {

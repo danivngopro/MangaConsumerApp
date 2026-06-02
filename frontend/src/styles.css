@@ -227,7 +227,7 @@ button:not(:disabled):active {
 
 .metrics {
   display: grid;
-  grid-template-columns: repeat(7, minmax(0, 1fr));
+  grid-template-columns: repeat(8, minmax(0, 1fr));
   gap: 12px;
   margin-bottom: 16px;
 }
@@ -265,6 +265,11 @@ button:not(:disabled):active {
 .metric strong {
   font-size: 28px;
   line-height: 1;
+}
+
+.metric.caution .metric-icon {
+  background: rgba(251, 146, 60, 0.16);
+  color: #fb923c;
 }
 
 .metric.warn .metric-icon {
