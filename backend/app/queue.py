@@ -7,6 +7,7 @@ from pathlib import Path
 
 from . import repository
 from .downloader import download_chapter
+from .driver_pool import DriverPool
 from .komga import KomgaClient, run_post_download_komga_action
 
 
@@ -29,6 +30,7 @@ class DownloadQueue:
         self._threads: list[threading.Thread] = []
         self._threads_lock = threading.Lock()
         self._worker_jobs: dict[int, dict] = {}
+        self._driver_pool = DriverPool(pool_size=self._concurrency)
 
     @property
     def paused(self) -> bool:
@@ -37,6 +39,7 @@ class DownloadQueue:
     def start(self) -> None:
         self.temp_root.mkdir(parents=True, exist_ok=True)
         self._stop.clear()
+        self._driver_pool.start()
         self._ensure_worker_count()
 
     def stop(self) -> None:
@@ -44,6 +47,7 @@ class DownloadQueue:
         for thread in self._threads:
             thread.join(timeout=5)
         self._threads = []
+        self._driver_pool.stop()
 
     @property
     def concurrency(self) -> int:
@@ -51,6 +55,7 @@ class DownloadQueue:
 
     def set_concurrency(self, value: int) -> None:
         self._concurrency = max(1, min(6, int(value)))
+        self._driver_pool.set_pool_size(self._concurrency)
         self._ensure_worker_count()
 
     def retire_worker(self, ident: int) -> dict:
@@ -107,19 +112,26 @@ class DownloadQueue:
                     "chapter": chapter["label"],
                     "startedAt": time.time(),
                 }
-                existed_before_download = bool(manga.get("local_folder"))
-                file_path = download_chapter(self.conn, self.library_root, self.temp_root, manga, chapter)
-                repository.set_job_status(self.conn, job["id"], "done")
-                repository.log(self.conn, "info", f"Downloaded {manga['title']} {chapter['label']} to {file_path}")
-                repository.maybe_resume_auto_paused(self.conn)
-                komga_auto_enabled = repository.get_setting(self.conn, "komga_auto_enabled", "0") == "1"
-                if komga_auto_enabled and not repository.has_pending_download_jobs_for_manga(self.conn, int(manga["id"])):
-                    run_post_download_komga_action(
-                        self.conn,
-                        self.komga_client,
-                        manga,
-                        existed_before_download,
-                    )
+                driver = self._driver_pool.acquire(timeout=30)
+                if driver is None:
+                    raise RuntimeError("Timeout waiting for available driver from pool")
+                try:
+                    existed_before_download = bool(manga.get("local_folder"))
+                    file_path = download_chapter(self.conn, self.library_root, self.temp_root, manga, chapter, driver)
+                    repository.set_job_status(self.conn, job["id"], "done")
+                    repository.log(self.conn, "info", f"Downloaded {manga['title']} {chapter['label']} to {file_path}")
+                    repository.maybe_resume_auto_paused(self.conn)
+                    repository.maybe_enqueue_next_pending_chapter(self.conn)
+                    komga_auto_enabled = repository.get_setting(self.conn, "komga_auto_enabled", "0") == "1"
+                    if komga_auto_enabled and not repository.has_pending_download_jobs_for_manga(self.conn, int(manga["id"])):
+                        run_post_download_komga_action(
+                            self.conn,
+                            self.komga_client,
+                            manga,
+                            existed_before_download,
+                        )
+                finally:
+                    self._driver_pool.release(driver)
             except Exception as exc:
                 attempts = int(job["attempts"])
                 if attempts < 3:

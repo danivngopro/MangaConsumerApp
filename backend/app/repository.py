@@ -148,12 +148,18 @@ def finish_limited_scan_batch(conn: sqlite3.Connection, result: dict) -> None:
                 "limited_scan_batch_manga_ids",
                 json.dumps(result["batchMangaIds"]),
             )
+            if result.get("pendingMangaId"):
+                _set_setting_uncommitted(conn, "limited_scan_pending_manga_id", str(result["pendingMangaId"]))
+                _set_setting_uncommitted(conn, "limited_scan_pending_chapter_ids", json.dumps(result.get("pendingChapterIds", [])))
+                _set_setting_uncommitted(conn, "limited_scan_pending_chapter_index", "0")
             _set_setting_uncommitted(conn, "limited_scan_batch_running", "0")
             if result.get("stopped"):
                 _set_setting_uncommitted(conn, "limited_scan_active", "0")
                 _set_setting_uncommitted(conn, "limited_scan_batch_manga_ids", "[]")
+                _set_setting_uncommitted(conn, "limited_scan_pending_manga_id", "0")
             elif not result["batchMangaIds"] or result["exhausted"]:
                 _set_setting_uncommitted(conn, "limited_scan_active", "0")
+                _set_setting_uncommitted(conn, "limited_scan_pending_manga_id", "0")
             conn.commit()
         except Exception:
             conn.execute("ROLLBACK")
@@ -274,21 +280,38 @@ def update_manga_scan_counts(
 
 def upsert_chapters(conn: sqlite3.Connection, manga_id: int, chapters: Iterable[dict]) -> None:
     now = utc_now()
+    chapters_list = []
     for chapter in chapters:
         key = chapter_key(chapter["number"])
         if not key:
             continue
-        conn.execute(
-            """
-            INSERT INTO chapters(manga_id, chapter_key, label, url, updated_at)
-            VALUES (?, ?, ?, ?, ?)
-            ON CONFLICT(manga_id, chapter_key) DO UPDATE SET
-                label = excluded.label,
-                url = excluded.url,
-                updated_at = excluded.updated_at
-            """,
-            (manga_id, key, chapter.get("label") or f"Chapter {key}", chapter["url"], now),
-        )
+        chapters_list.append((
+            manga_id,
+            key,
+            chapter.get("label") or f"Chapter {key}",
+            chapter["url"],
+            now,
+        ))
+
+    if not chapters_list:
+        return
+
+    placeholders = ",".join("(?, ?, ?, ?, ?)" for _ in chapters_list)
+    values = []
+    for chapter_tuple in chapters_list:
+        values.extend(chapter_tuple)
+
+    conn.execute(
+        f"""
+        INSERT INTO chapters(manga_id, chapter_key, label, url, updated_at)
+        VALUES {placeholders}
+        ON CONFLICT(manga_id, chapter_key) DO UPDATE SET
+            label = excluded.label,
+            url = excluded.url,
+            updated_at = excluded.updated_at
+        """,
+        values,
+    )
     conn.commit()
 
 
@@ -498,6 +521,39 @@ def maybe_resume_auto_paused(conn: sqlite3.Connection) -> int:
         )
         conn.commit()
         return cursor.rowcount
+
+
+def maybe_enqueue_next_pending_chapter(conn: sqlite3.Connection) -> bool:
+    """If there are pending chapters from top-up, enqueue the next one.
+    Returns True if a chapter was enqueued, False otherwise."""
+    with DB_LOCK:
+        pending_manga_id_str = get_setting(conn, "limited_scan_pending_manga_id", "0")
+        pending_manga_id = int(pending_manga_id_str or "0")
+        if pending_manga_id <= 0:
+            return False
+
+        pending_ids_str = get_setting(conn, "limited_scan_pending_chapter_ids", "[]")
+        pending_ids = json.loads(pending_ids_str or "[]")
+        if not pending_ids:
+            _set_setting_uncommitted(conn, "limited_scan_pending_manga_id", "0")
+            conn.commit()
+            return False
+
+        pending_index_str = get_setting(conn, "limited_scan_pending_chapter_index", "0")
+        pending_index = int(pending_index_str or "0")
+        if pending_index >= len(pending_ids):
+            _set_setting_uncommitted(conn, "limited_scan_pending_manga_id", "0")
+            _set_setting_uncommitted(conn, "limited_scan_pending_chapter_ids", "[]")
+            _set_setting_uncommitted(conn, "limited_scan_pending_chapter_index", "0")
+            conn.commit()
+            return False
+
+        chapter_id = int(pending_ids[pending_index])
+        _set_setting_uncommitted(conn, "limited_scan_pending_chapter_index", str(pending_index + 1))
+        conn.commit()
+
+        enqueue_download(conn, pending_manga_id, chapter_id, priority=0)
+        return True
 
 
 def pause_downloads_for_manga(conn: sqlite3.Connection, manga_id: int) -> int:

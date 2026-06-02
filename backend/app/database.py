@@ -68,6 +68,8 @@ CREATE TABLE IF NOT EXISTS jobs (
     finished_at TEXT
 );
 
+CREATE INDEX IF NOT EXISTS idx_jobs_type_status_priority ON jobs(type, status, priority DESC, id ASC);
+
 CREATE TABLE IF NOT EXISTS logs (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     level TEXT NOT NULL,

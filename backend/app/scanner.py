@@ -61,6 +61,8 @@ def scan_limited_catalog_batch(
             "catalogTotal": 0,
             "exhausted": False,
             "stopped": True,
+            "pendingMangaId": 0,
+            "pendingChapterIds": [],
         }
     if reindex_library:
         local_result = scan_library(conn, library_root)
@@ -73,6 +75,8 @@ def scan_limited_catalog_batch(
     enqueued = 0
     batch_manga_ids: list[int] = []
     total = 0
+    pending_manga_id = 0
+    pending_chapter_ids: list[int] = []
 
     stopped = False
     while len(batch_manga_ids) < batch_size:
@@ -103,15 +107,17 @@ def scan_limited_catalog_batch(
                     status=item.get("status"),
                     remote_chapter_count=int(item.get("chapter_count") or 0),
                 )
-                result_item = scan_one_series(conn, client, hint, inventory, should_stop=should_stop)
+                result_item = scan_one_series_deferred(conn, client, hint, inventory, should_stop=should_stop)
                 scanned += 1
-                enqueued += result_item["enqueued"]
+                missing_count = len(result_item["missingChapterIds"])
                 if result_item.get("stopped"):
                     stopped = True
                     break
-                if result_item["missingChapters"] > 0:
+                if missing_count > 0:
                     batch_manga_ids.append(int(result_item["mangaId"]))
                     if len(batch_manga_ids) >= batch_size:
+                        pending_manga_id = int(result_item["mangaId"])
+                        pending_chapter_ids = result_item["missingChapterIds"]
                         break
             except Exception as exc:
                 repository.log(conn, "error", f"Limited scan failed for {item.get('title', '?')}: {exc}")
@@ -125,8 +131,8 @@ def scan_limited_catalog_batch(
     repository.log(
         conn,
         "info",
-        f"Limited scan batch {status}: {len(batch_manga_ids)}/{batch_size} books with downloads, "
-        f"{scanned} series scanned, {enqueued} downloads queued, next offset {current_offset}",
+        f"Limited scan batch {status}: {len(batch_manga_ids)}/{batch_size} books scanned, "
+        f"{scanned} series scanned, {pending_manga_id and len(pending_chapter_ids) or 0} pending chapters queued for progressive enqueue, next offset {current_offset}",
     )
     return {
         "seriesScanned": scanned,
@@ -138,6 +144,8 @@ def scan_limited_catalog_batch(
         "catalogTotal": total,
         "exhausted": not stopped and (not batch_manga_ids or (total > 0 and current_offset >= total and len(batch_manga_ids) < batch_size)),
         "stopped": stopped,
+        "pendingMangaId": pending_manga_id,
+        "pendingChapterIds": pending_chapter_ids,
     }
 
 
@@ -231,6 +239,73 @@ def scan_one_series(
         "localChapters": len(local_keys),
         "missingChapters": len(missing),
         "enqueued": len(missing),
+    }
+
+
+def scan_one_series_deferred(
+    conn: sqlite3.Connection,
+    client: AsuraClient,
+    series_hint: AsuraSeries,
+    inventory: dict[str, dict],
+    should_stop: Callable[[], bool] | None = None,
+) -> dict:
+    """Scan a series and return missing chapters WITHOUT enqueueing them (for progressive top-up)."""
+    if should_stop and should_stop():
+        return {
+            "mangaId": 0,
+            "title": series_hint.title,
+            "remoteChapters": 0,
+            "localChapters": 0,
+            "missingChapterIds": [],
+            "stopped": True,
+        }
+    series, chapters = client.fetch_series(series_hint.url)
+    if should_stop and should_stop():
+        return {
+            "mangaId": 0,
+            "title": series.title,
+            "remoteChapters": len(chapters),
+            "localChapters": 0,
+            "missingChapterIds": [],
+            "stopped": True,
+        }
+    manga_id = repository.upsert_manga(
+        conn,
+        {
+            "slug": series.slug,
+            "title": series.title,
+            "url": series.url,
+            "cover_url": series.cover_url or series_hint.cover_url,
+            "status": series.status or series_hint.status,
+            "remote_chapter_count": series.remote_chapter_count or len(chapters),
+        },
+    )
+    repository.upsert_chapters(
+        conn,
+        manga_id,
+        [{"number": ch.number, "label": ch.label, "url": ch.url} for ch in chapters],
+    )
+
+    local = local_match_for_title(inventory, series.title)
+    local_keys = local["chapters"] if local else set()
+    missing = repository.find_missing_chapters(conn, manga_id, local_keys)
+
+    missing_chapter_ids = [ch["id"] for ch in missing]
+
+    repository.update_manga_scan_counts(
+        conn,
+        manga_id,
+        len(local_keys),
+        len(missing),
+        local["folder_path"] if local else None,
+    )
+    return {
+        "mangaId": manga_id,
+        "title": series.title,
+        "remoteChapters": len(chapters),
+        "localChapters": len(local_keys),
+        "missingChapterIds": missing_chapter_ids,
+        "stopped": False,
     }
 
 
