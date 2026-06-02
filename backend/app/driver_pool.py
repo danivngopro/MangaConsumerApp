@@ -90,6 +90,16 @@ class DriverPool:
         options.add_argument(f"--user-agent={USER_AGENT}")
         options.add_argument("--disable-gpu")
         options.add_argument("--disable-extensions")
+        options.add_argument("--disable-background-networking")
+        options.add_argument("--disable-background-timer-throttling")
+        options.add_argument("--disable-renderer-backgrounding")
+        options.add_argument("--disable-backgrounding-occluded-windows")
+        options.add_argument("--disable-default-apps")
+        options.add_argument("--disable-sync")
+        options.add_argument("--no-first-run")
+        options.add_argument("--mute-audio")
+        options.add_argument("--disable-logging")
+        options.add_argument("--log-level=3")
         chromium_binary = which("chromium") or which("chromium-browser") or which("google-chrome")
         if chromium_binary:
             options.binary_location = chromium_binary

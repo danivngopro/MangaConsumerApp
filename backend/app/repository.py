@@ -72,12 +72,16 @@ def _set_setting_uncommitted(conn: sqlite3.Connection, key: str, value: str) -> 
 
 
 def active_download_job_count(conn: sqlite3.Connection) -> int:
+    # Only count jobs that will actually be worked on: queued, running, and
+    # auto_paused (which will resume when priority jobs finish). Excludes
+    # 'failed' (permanently stuck) and 'paused' (manually blocked) so the
+    # top-up threshold isn't inflated by dead/stalled jobs.
     row = conn.execute(
         """
         SELECT COUNT(*) AS count
         FROM jobs
         WHERE type = 'download'
-          AND status IN ('queued', 'running', 'failed', 'paused', 'auto_paused')
+          AND status IN ('queued', 'running', 'auto_paused')
         """
     ).fetchone()
     return int(row["count"] or 0)

@@ -119,7 +119,7 @@ def download_chapter(
 
         image_paths = _download_images_parallel(image_urls, temp_dir, chapter_url)
 
-        with zipfile.ZipFile(cbz_path, "w", zipfile.ZIP_DEFLATED) as archive:
+        with zipfile.ZipFile(cbz_path, "w", zipfile.ZIP_STORED) as archive:
             for image_path in image_paths:
                 archive.write(image_path, image_path.name)
 

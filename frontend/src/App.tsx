@@ -1010,15 +1010,26 @@ export function App() {
 
 function TotalProgressBar({ progress }: { progress: DownloadProgress[] }) {
   const totalDone = progress.reduce((sum, p) => sum + p.done, 0);
-  const totalActive = progress.reduce(
-    (sum, p) => sum + p.queued + p.running + p.paused + p.failed,
+  const totalInQueue = progress.reduce(
+    (sum, p) => sum + p.queued + p.running,
     0,
   );
+  const totalPaused = progress.reduce((sum, p) => sum + p.paused, 0);
+  const totalFailed = progress.reduce((sum, p) => sum + p.failed, 0);
+  const totalActive = totalInQueue + totalPaused + totalFailed;
   const totalItems = totalDone + totalActive;
   const percent =
     totalItems > 0 ? Math.round((totalDone / totalItems) * 100) : 0;
 
   if (!totalItems) return null;
+
+  const activeLabel = [
+    totalInQueue > 0 && `${totalInQueue} in queue`,
+    totalPaused > 0 && `${totalPaused} paused`,
+    totalFailed > 0 && `${totalFailed} failed`,
+  ]
+    .filter(Boolean)
+    .join(", ");
 
   return (
     <div className="panel total-progress-panel">
@@ -1031,7 +1042,7 @@ function TotalProgressBar({ progress }: { progress: DownloadProgress[] }) {
         </span>
         <span className="total-percent">{percent}%</span>
         {totalActive > 0 && (
-          <span className="total-active">{totalActive} active</span>
+          <span className="total-active">{activeLabel}</span>
         )}
       </div>
       <div className="progress-track">
