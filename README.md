@@ -39,6 +39,7 @@ KOMGA_URL=http://192.168.1.139:25600
 python -m venv .venv
 .\.venv\Scripts\Activate.ps1
 pip install -r requirements.txt
+python -m playwright install chromium
 uvicorn backend.app.main:app --reload --host 0.0.0.0 --port 8816
 ```
 
@@ -88,8 +89,8 @@ The first page load asks you to register the single owner account. After that, r
 
 - Full scans automatically enqueue newly discovered titles and missing chapters.
 - Existing `.cbz` files are not overwritten.
-- Download workers can be changed from the UI. Keep it low; 1-3 is the practical range for Asura.
-- The downloader defaults to one worker to avoid hammering Asura.
+- Download workers, reader browser pages, and image workers can be changed from the UI. Keep browser pages low; 1-2 is the practical CPU-friendly range for Asura.
+- The downloader defaults to Playwright with a small browser-page pool. Selenium remains available as a fallback reader engine.
 - After the last queued download for a new book finishes, the backend creates/syncs the Komga library and triggers a quick `deep=false` scan.
 - After the last queued download for an existing book finishes, the backend triggers a quick `deep=false` Komga scan for that book's library.
 - The UI has manual quick scan buttons for a single book and for all Komga libraries. The all-library scan asks for confirmation first.

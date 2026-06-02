@@ -7,8 +7,8 @@ from pathlib import Path
 
 from . import repository
 from .downloader import download_chapter
-from .driver_pool import DriverPool
 from .komga import KomgaClient, run_post_download_komga_action
+from .reader_extractor import ReaderExtractionPool
 
 
 class DownloadQueue:
@@ -19,18 +19,24 @@ class DownloadQueue:
         temp_root: Path,
         komga_client: KomgaClient,
         concurrency: int = 1,
+        browser_concurrency: int = 2,
+        image_download_workers: int = 4,
+        reader_engine: str = "playwright",
     ) -> None:
         self.conn = conn
         self.library_root = library_root
         self.temp_root = temp_root
         self.komga_client = komga_client
         self._concurrency = max(1, concurrency)
+        self._browser_concurrency = max(1, min(4, int(browser_concurrency)))
+        self._image_download_workers = max(1, min(8, int(image_download_workers)))
+        self._reader_engine = reader_engine if reader_engine in {"playwright", "selenium"} else "playwright"
         self._stop = threading.Event()
         self._paused = threading.Event()
         self._threads: list[threading.Thread] = []
         self._threads_lock = threading.Lock()
         self._worker_jobs: dict[int, dict] = {}
-        self._driver_pool = DriverPool(pool_size=self._concurrency)
+        self._reader_pool = ReaderExtractionPool(self._browser_concurrency, self._reader_engine)
 
     @property
     def paused(self) -> bool:
@@ -39,7 +45,7 @@ class DownloadQueue:
     def start(self) -> None:
         self.temp_root.mkdir(parents=True, exist_ok=True)
         self._stop.clear()
-        self._driver_pool.start()
+        self._reader_pool.start()
         self._ensure_worker_count()
 
     def stop(self) -> None:
@@ -47,7 +53,7 @@ class DownloadQueue:
         for thread in self._threads:
             thread.join(timeout=5)
         self._threads = []
-        self._driver_pool.stop()
+        self._reader_pool.stop()
 
     @property
     def concurrency(self) -> int:
@@ -55,8 +61,30 @@ class DownloadQueue:
 
     def set_concurrency(self, value: int) -> None:
         self._concurrency = max(1, min(6, int(value)))
-        self._driver_pool.set_pool_size(self._concurrency)
         self._ensure_worker_count()
+
+    @property
+    def browser_concurrency(self) -> int:
+        return self._browser_concurrency
+
+    @property
+    def image_download_workers(self) -> int:
+        return self._image_download_workers
+
+    @property
+    def reader_engine(self) -> str:
+        return self._reader_engine
+
+    def set_reader_options(
+        self,
+        browser_concurrency: int,
+        image_download_workers: int,
+        reader_engine: str,
+    ) -> None:
+        self._browser_concurrency = max(1, min(4, int(browser_concurrency)))
+        self._image_download_workers = max(1, min(8, int(image_download_workers)))
+        self._reader_engine = reader_engine if reader_engine in {"playwright", "selenium"} else "playwright"
+        self._reader_pool.set_options(self._browser_concurrency, self._reader_engine)
 
     def retire_worker(self, ident: int) -> dict:
         with self._threads_lock:
@@ -112,26 +140,28 @@ class DownloadQueue:
                     "chapter": chapter["label"],
                     "startedAt": time.time(),
                 }
-                driver = self._driver_pool.acquire(timeout=30)
-                if driver is None:
-                    raise RuntimeError("Timeout waiting for available driver from pool")
-                try:
-                    existed_before_download = bool(manga.get("local_folder"))
-                    file_path = download_chapter(self.conn, self.library_root, self.temp_root, manga, chapter, driver)
-                    repository.set_job_status(self.conn, job["id"], "done")
-                    repository.log(self.conn, "info", f"Downloaded {manga['title']} {chapter['label']} to {file_path}")
-                    repository.maybe_resume_auto_paused(self.conn)
-                    repository.maybe_enqueue_next_pending_chapter(self.conn)
-                    komga_auto_enabled = repository.get_setting(self.conn, "komga_auto_enabled", "0") == "1"
-                    if komga_auto_enabled and not repository.has_pending_download_jobs_for_manga(self.conn, int(manga["id"])):
-                        run_post_download_komga_action(
-                            self.conn,
-                            self.komga_client,
-                            manga,
-                            existed_before_download,
-                        )
-                finally:
-                    self._driver_pool.release(driver)
+                existed_before_download = bool(manga.get("local_folder"))
+                file_path = download_chapter(
+                    self.conn,
+                    self.library_root,
+                    self.temp_root,
+                    manga,
+                    chapter,
+                    extract_image_urls=self._reader_pool.extract,
+                    image_download_workers=self._image_download_workers,
+                )
+                repository.set_job_status(self.conn, job["id"], "done")
+                repository.log(self.conn, "info", f"Downloaded {manga['title']} {chapter['label']} to {file_path}")
+                repository.maybe_resume_auto_paused(self.conn)
+                repository.maybe_enqueue_next_pending_chapter(self.conn)
+                komga_auto_enabled = repository.get_setting(self.conn, "komga_auto_enabled", "0") == "1"
+                if komga_auto_enabled and not repository.has_pending_download_jobs_for_manga(self.conn, int(manga["id"])):
+                    run_post_download_komga_action(
+                        self.conn,
+                        self.komga_client,
+                        manga,
+                        existed_before_download,
+                    )
             except Exception as exc:
                 attempts = int(job["attempts"])
                 if attempts < 3:
@@ -176,5 +206,7 @@ class DownloadQueue:
         return {
             "paused": self.paused,
             "concurrency": self.concurrency,
+            "reader": self._reader_pool.debug_state(),
+            "imageDownloadWorkers": self._image_download_workers,
             "workers": threads,
         }

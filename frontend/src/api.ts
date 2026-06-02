@@ -17,6 +17,9 @@ export type Summary = {
   komgaUrl: string;
   autoScanEveryDays: number;
   downloadConcurrency: number;
+  browserConcurrency: number;
+  imageDownloadWorkers: number;
+  readerEngine: "playwright" | "selenium";
   cpuPercent: number;
 };
 
@@ -181,6 +184,9 @@ export type DebugThreads = {
     limitedScanActiveThreshold: number;
     autoScanEveryDays: number;
     komgaAutoEnabled: boolean;
+    browserConcurrency: number;
+    imageDownloadWorkers: number;
+    readerEngine: "playwright" | "selenium";
   };
 };
 
@@ -282,6 +288,9 @@ export const api = {
   updateSettings: (
     autoScanEveryDays: number,
     downloadConcurrency: number,
+    browserConcurrency: number,
+    imageDownloadWorkers: number,
+    readerEngine: "playwright" | "selenium",
     komgaAutoEnabled: boolean,
   ) =>
     request<Summary>("/api/settings", {
@@ -289,6 +298,9 @@ export const api = {
       body: JSON.stringify({
         autoScanEveryDays,
         downloadConcurrency,
+        browserConcurrency,
+        imageDownloadWorkers,
+        readerEngine,
         komgaAutoEnabled,
       }),
     }),

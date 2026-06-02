@@ -49,6 +49,9 @@ const emptySummary: Summary = {
   komgaUrl: "",
   autoScanEveryDays: 0,
   downloadConcurrency: 1,
+  browserConcurrency: 2,
+  imageDownloadWorkers: 4,
+  readerEngine: "playwright",
   cpuPercent: 0,
 };
 
@@ -90,6 +93,11 @@ export function App() {
   const [scanLimit, setScanLimit] = useState(300);
   const [intervalDays, setIntervalDays] = useState(0);
   const [downloadConcurrency, setDownloadConcurrency] = useState(1);
+  const [browserConcurrency, setBrowserConcurrency] = useState(2);
+  const [imageDownloadWorkers, setImageDownloadWorkers] = useState(4);
+  const [readerEngine, setReaderEngine] = useState<"playwright" | "selenium">(
+    "playwright",
+  );
   const [komgaAutoEnabled, setKomgaAutoEnabled] = useState(false);
   const [status, setStatus] = useState("Ready");
   const [loading, setLoading] = useState(false);
@@ -111,6 +119,9 @@ export function App() {
     setDebugThreads(nextThreads);
     setIntervalDays(nextSummary.autoScanEveryDays);
     setDownloadConcurrency(nextSummary.downloadConcurrency);
+    setBrowserConcurrency(nextSummary.browserConcurrency);
+    setImageDownloadWorkers(nextSummary.imageDownloadWorkers);
+    setReaderEngine(nextSummary.readerEngine);
     setKomgaAutoEnabled(nextSummary.komgaAutoEnabled);
     if (!scanLimitFocused) {
       setScanLimit(nextSummary.limitedScanActiveThreshold);
@@ -165,7 +176,14 @@ export function App() {
   async function submitSettings(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
     await runAction("Settings update", () =>
-      api.updateSettings(intervalDays, downloadConcurrency, komgaAutoEnabled),
+      api.updateSettings(
+        intervalDays,
+        downloadConcurrency,
+        browserConcurrency,
+        imageDownloadWorkers,
+        readerEngine,
+        komgaAutoEnabled,
+      ),
     );
   }
 
@@ -612,6 +630,42 @@ export function App() {
                 }
               />
             </label>
+            <label title="Limit simultaneous rendered reader pages. Lower values reduce browser CPU.">
+              Browser pages
+              <input
+                type="number"
+                min={1}
+                max={4}
+                value={browserConcurrency}
+                onChange={(event) =>
+                  setBrowserConcurrency(Number(event.target.value))
+                }
+              />
+            </label>
+            <label title="Limit HTTP page image downloads per chapter after image URLs are extracted.">
+              Image workers
+              <input
+                type="number"
+                min={1}
+                max={8}
+                value={imageDownloadWorkers}
+                onChange={(event) =>
+                  setImageDownloadWorkers(Number(event.target.value))
+                }
+              />
+            </label>
+            <label title="Playwright uses one shared browser process. Selenium is available as fallback.">
+              Reader engine
+              <select
+                value={readerEngine}
+                onChange={(event) =>
+                  setReaderEngine(event.target.value as "playwright" | "selenium")
+                }
+              >
+                <option value="playwright">Playwright</option>
+                <option value="selenium">Selenium</option>
+              </select>
+            </label>
             <label className="checkbox-label">
               <input
                 type="checkbox"
@@ -627,8 +681,9 @@ export function App() {
             </button>
           </form>
           <p className="muted">
-            Auto scan 0 disables scheduling. Concurrent downloads controls
-            parallel chapter workers. Komga automation is{" "}
+            Auto scan 0 disables scheduling. Browser pages controls CPU-heavy
+            reader rendering; image workers controls HTTP transfer parallelism.
+            Komga automation is{" "}
             {summary.komgaAutoEnabled ? "enabled" : "disabled"}. Last scan:{" "}
             {summary.lastScanAt
               ? new Date(summary.lastScanAt).toLocaleString()

@@ -8,6 +8,7 @@ import time
 import zipfile
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from pathlib import Path
+from typing import Callable
 from urllib.parse import urljoin
 
 import requests
@@ -89,7 +90,8 @@ def download_chapter(
     temp_root: Path,
     manga: dict,
     chapter: dict,
-    driver: webdriver.Chrome,
+    extract_image_urls: Callable[[str], list[str]],
+    image_download_workers: int = 4,
 ) -> str:
     manga_folder = library_root / sanitize_filename(manga["title"])
     manga_folder.mkdir(parents=True, exist_ok=True)
@@ -107,17 +109,18 @@ def download_chapter(
         chapter_url = chapter["url"]
         if chapter_url.startswith("/"):
             chapter_url = urljoin(manga["url"], chapter_url)
-        driver.get(chapter_url)
-        WebDriverWait(driver, 30).until(
-            lambda d: d.execute_script("return document.readyState") == "complete"
-        )
-        image_urls = get_loaded_images(driver)
+        image_urls = extract_image_urls(chapter_url)
         if len(image_urls) < 3:
             raise RuntimeError(f"Too few page images found at {chapter_url}: {len(image_urls)}")
         if not all("asura-images" in url for url in image_urls):
             raise RuntimeError("Reader returned non-Asura page images")
 
-        image_paths = _download_images_parallel(image_urls, temp_dir, chapter_url)
+        image_paths = _download_images_parallel(
+            image_urls,
+            temp_dir,
+            chapter_url,
+            max_workers=max(1, min(8, int(image_download_workers))),
+        )
 
         with zipfile.ZipFile(cbz_path, "w", zipfile.ZIP_STORED) as archive:
             for image_path in image_paths:

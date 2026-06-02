@@ -37,6 +37,9 @@ class TopUpThresholdRequest(BaseModel):
 class SettingsRequest(BaseModel):
     autoScanEveryDays: int
     downloadConcurrency: int
+    browserConcurrency: int = 2
+    imageDownloadWorkers: int = 4
+    readerEngine: str = "playwright"
     komgaAutoEnabled: bool = False
 
 
@@ -73,9 +76,38 @@ repository.set_setting(
 )
 repository.set_setting(
     conn,
+    "browser_concurrency",
+    repository.get_setting(conn, "browser_concurrency", str(settings.browser_concurrency)),
+)
+repository.set_setting(
+    conn,
+    "image_download_workers",
+    repository.get_setting(conn, "image_download_workers", str(settings.image_download_workers)),
+)
+repository.set_setting(
+    conn,
+    "reader_engine",
+    repository.get_setting(conn, "reader_engine", settings.reader_engine),
+)
+repository.set_setting(
+    conn,
     "komga_auto_enabled",
     repository.get_setting(conn, "komga_auto_enabled", "0"),
 )
+
+
+def bounded_setting_int(key: str, default: int, minimum: int, maximum: int) -> int:
+    try:
+        value = int(repository.get_setting(conn, key, str(default)) or str(default))
+    except ValueError:
+        value = default
+    return max(minimum, min(maximum, value))
+
+
+def reader_engine_setting(default: str = "playwright") -> str:
+    value = repository.get_setting(conn, "reader_engine", default)
+    return value if value in {"playwright", "selenium"} else default
+
 
 asura_client = AsuraClient(settings.asura_base_url, settings.request_delay_seconds)
 komga_client = KomgaClient(
@@ -91,7 +123,10 @@ download_queue = DownloadQueue(
     settings.library_root,
     settings.app_data_dir / "tmp",
     komga_client,
-    int(repository.get_setting(conn, "download_concurrency", str(settings.download_concurrency))),
+    bounded_setting_int("download_concurrency", settings.download_concurrency, 1, 6),
+    bounded_setting_int("browser_concurrency", settings.browser_concurrency, 1, 4),
+    bounded_setting_int("image_download_workers", settings.image_download_workers, 1, 8),
+    reader_engine_setting(settings.reader_engine),
 )
 scan_scheduler = ScanScheduler(conn, asura_client, settings.library_root)
 scan_stop_event = threading.Event()
@@ -140,6 +175,9 @@ def health() -> dict:
         "database": str(db_path),
         "queuePaused": download_queue.paused,
         "downloadConcurrency": download_queue.concurrency,
+        "browserConcurrency": download_queue.browser_concurrency,
+        "imageDownloadWorkers": download_queue.image_download_workers,
+        "readerEngine": download_queue.reader_engine,
         "komgaAutoEnabled": repository.get_setting(conn, "komga_auto_enabled", "0") == "1",
     }
 
@@ -174,6 +212,9 @@ def summary(_user: dict = Depends(authenticated_user)) -> dict:
     data["komgaAutoEnabled"] = repository.get_setting(conn, "komga_auto_enabled", "0") == "1"
     data["autoScanEveryDays"] = int(repository.get_setting(conn, "auto_scan_every_days", "0") or "0")
     data["downloadConcurrency"] = download_queue.concurrency
+    data["browserConcurrency"] = download_queue.browser_concurrency
+    data["imageDownloadWorkers"] = download_queue.image_download_workers
+    data["readerEngine"] = download_queue.reader_engine
     data["limitedScanActive"] = repository.get_setting(conn, "limited_scan_active", "0") == "1"
     data["scanRunning"] = scan_scheduler.scan_running
     data["limitedScanActiveThreshold"] = int(repository.get_setting(conn, "limited_scan_active_threshold", "300") or "300")
@@ -226,6 +267,9 @@ def debug_threads(_user: dict = Depends(authenticated_user)) -> dict:
             "limitedScanActiveThreshold": int(repository.get_setting(conn, "limited_scan_active_threshold", "300") or "300"),
             "autoScanEveryDays": int(repository.get_setting(conn, "auto_scan_every_days", "0") or "0"),
             "komgaAutoEnabled": repository.get_setting(conn, "komga_auto_enabled", "0") == "1",
+            "browserConcurrency": download_queue.browser_concurrency,
+            "imageDownloadWorkers": download_queue.image_download_workers,
+            "readerEngine": download_queue.reader_engine,
         },
     }
 
@@ -312,6 +356,9 @@ def get_settings(_user: dict = Depends(authenticated_user)) -> dict:
         "komgaAutoEnabled": repository.get_setting(conn, "komga_auto_enabled", "0") == "1",
         "autoScanEveryDays": int(repository.get_setting(conn, "auto_scan_every_days", "0") or "0"),
         "downloadConcurrency": download_queue.concurrency,
+        "browserConcurrency": download_queue.browser_concurrency,
+        "imageDownloadWorkers": download_queue.image_download_workers,
+        "readerEngine": download_queue.reader_engine,
         "queuePaused": download_queue.paused,
         "limitedScanActive": repository.get_setting(conn, "limited_scan_active", "0") == "1",
         "scanRunning": scan_scheduler.scan_running,
@@ -323,13 +370,21 @@ def get_settings(_user: dict = Depends(authenticated_user)) -> dict:
 def update_settings(payload: SettingsRequest, _user: dict = Depends(authenticated_user)) -> dict:
     days = max(0, int(payload.autoScanEveryDays))
     concurrency = max(1, min(6, int(payload.downloadConcurrency)))
+    browser_concurrency = max(1, min(4, int(payload.browserConcurrency)))
+    image_download_workers = max(1, min(8, int(payload.imageDownloadWorkers)))
+    reader_engine = payload.readerEngine if payload.readerEngine in {"playwright", "selenium"} else "playwright"
     komga_auto_enabled = bool(payload.komgaAutoEnabled)
     repository.set_setting(conn, "auto_scan_every_days", str(days))
     repository.set_setting(conn, "download_concurrency", str(concurrency))
+    repository.set_setting(conn, "browser_concurrency", str(browser_concurrency))
+    repository.set_setting(conn, "image_download_workers", str(image_download_workers))
+    repository.set_setting(conn, "reader_engine", reader_engine)
     repository.set_setting(conn, "komga_auto_enabled", "1" if komga_auto_enabled else "0")
     download_queue.set_concurrency(concurrency)
+    download_queue.set_reader_options(browser_concurrency, image_download_workers, reader_engine)
     repository.log(conn, "info", f"Auto full scan interval set to {days} days")
     repository.log(conn, "info", f"Download concurrency set to {concurrency}")
+    repository.log(conn, "info", f"Reader engine set to {reader_engine}; browser concurrency {browser_concurrency}; image workers {image_download_workers}")
     repository.log(conn, "info", f"Auto Komga import/scan set to {'enabled' if komga_auto_enabled else 'disabled'}")
     return get_settings(_user)
 

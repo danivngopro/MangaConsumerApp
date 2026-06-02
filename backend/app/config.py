@@ -16,6 +16,9 @@ class Settings:
     app_data_dir: Path
     asura_base_url: str
     download_concurrency: int
+    browser_concurrency: int
+    image_download_workers: int
+    reader_engine: str
     request_delay_seconds: float
     auto_scan_every_days: int
     komga_url: str
@@ -38,6 +41,15 @@ def _float_env(name: str, default: float) -> float:
         return default
 
 
+def _bounded_int_env(name: str, default: int, minimum: int, maximum: int) -> int:
+    return max(minimum, min(maximum, _int_env(name, default)))
+
+
+def _reader_engine_env() -> str:
+    value = os.getenv("READER_ENGINE", "playwright").strip().lower()
+    return value if value in {"playwright", "selenium"} else "playwright"
+
+
 def load_settings() -> Settings:
     return Settings(
         library_root=Path(
@@ -48,7 +60,10 @@ def load_settings() -> Settings:
         ),
         app_data_dir=Path(os.getenv("APP_DATA_DIR", ".manga-recoverer")),
         asura_base_url=os.getenv("ASURA_BASE_URL", "https://asurascans.com").rstrip("/"),
-        download_concurrency=max(1, _int_env("DOWNLOAD_CONCURRENCY", 1)),
+        download_concurrency=_bounded_int_env("DOWNLOAD_CONCURRENCY", 3, 1, 6),
+        browser_concurrency=_bounded_int_env("BROWSER_CONCURRENCY", 2, 1, 4),
+        image_download_workers=_bounded_int_env("IMAGE_DOWNLOAD_WORKERS", 4, 1, 8),
+        reader_engine=_reader_engine_env(),
         request_delay_seconds=max(0.0, _float_env("REQUEST_DELAY_SECONDS", 1.0)),
         auto_scan_every_days=max(0, _int_env("AUTO_SCAN_EVERY_DAYS", 0)),
         komga_url=os.getenv("KOMGA_URL", "http://localhost:25600").rstrip("/"),

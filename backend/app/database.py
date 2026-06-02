@@ -68,8 +68,6 @@ CREATE TABLE IF NOT EXISTS jobs (
     finished_at TEXT
 );
 
-CREATE INDEX IF NOT EXISTS idx_jobs_type_status_priority ON jobs(type, status, priority DESC, id ASC);
-
 CREATE TABLE IF NOT EXISTS logs (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     level TEXT NOT NULL,
@@ -94,6 +92,11 @@ CREATE TABLE IF NOT EXISTS sessions (
 """
 
 
+INDEXES = """
+CREATE INDEX IF NOT EXISTS idx_jobs_type_status_priority ON jobs(type, status, priority DESC, id ASC);
+"""
+
+
 def connect(db_path: Path) -> sqlite3.Connection:
     db_path.parent.mkdir(parents=True, exist_ok=True)
     conn = sqlite3.connect(db_path, check_same_thread=False)
@@ -105,6 +108,7 @@ def connect(db_path: Path) -> sqlite3.Connection:
 def init_db(conn: sqlite3.Connection) -> None:
     conn.executescript(SCHEMA)
     migrate_db(conn)
+    conn.executescript(INDEXES)
     conn.commit()
 
 
