@@ -84,7 +84,11 @@ def scan_limited_catalog_batch(
             stopped = True
             break
         page_size = min(100, max(24, batch_size * 2))
-        result = client.search_series(limit=page_size, offset=current_offset, sort="latest", order="desc")
+        try:
+            result = client.search_series(limit=page_size, offset=current_offset, sort="latest", order="desc")
+        except Exception as exc:
+            repository.log(conn, "error", f"Limited scan: catalog fetch failed at offset {current_offset}: {exc}")
+            break
         if should_stop and should_stop():
             stopped = True
             break

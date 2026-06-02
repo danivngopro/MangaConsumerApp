@@ -239,6 +239,11 @@ def jobs(_user: dict = Depends(authenticated_user)) -> list[dict]:
     return repository.list_jobs(conn)
 
 
+@app.get("/api/logs")
+def recent_logs(limit: int = 100, _user: dict = Depends(authenticated_user)) -> list[dict]:
+    return repository.list_recent_logs(conn, limit)
+
+
 @app.get("/api/jobs/failed")
 def failed_jobs(_user: dict = Depends(authenticated_user)) -> list[dict]:
     return repository.list_failed_download_jobs(conn)
@@ -509,6 +514,13 @@ def pause_queue(_user: dict = Depends(authenticated_user)) -> dict:
 def resume_queue(_user: dict = Depends(authenticated_user)) -> dict:
     download_queue.resume()
     return {"queuePaused": False}
+
+
+@app.post("/api/queue/enqueue-missing")
+def enqueue_missing(_user: dict = Depends(authenticated_user)) -> dict:
+    count = repository.enqueue_all_missing(conn)
+    repository.log(conn, "info", f"Re-enqueued {count} missing chapters from known catalog")
+    return {"enqueued": count}
 
 
 @app.delete("/api/queue/queued")

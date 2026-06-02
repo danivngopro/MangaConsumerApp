@@ -141,6 +141,7 @@ class DownloadQueue:
                     "startedAt": time.time(),
                 }
                 existed_before_download = bool(manga.get("local_folder"))
+                repository.log(self.conn, "info", f"[{threading.current_thread().name}] Starting download: {manga['title']} — {chapter['label']}")
                 file_path = download_chapter(
                     self.conn,
                     self.library_root,
@@ -151,7 +152,7 @@ class DownloadQueue:
                     image_download_workers=self._image_download_workers,
                 )
                 repository.set_job_status(self.conn, job["id"], "done")
-                repository.log(self.conn, "info", f"Downloaded {manga['title']} {chapter['label']} to {file_path}")
+                repository.log(self.conn, "info", f"[{threading.current_thread().name}] Done: {manga['title']} — {chapter['label']} → {file_path}")
                 repository.maybe_resume_auto_paused(self.conn)
                 repository.maybe_enqueue_next_pending_chapter(self.conn)
                 komga_auto_enabled = repository.get_setting(self.conn, "komga_auto_enabled", "0") == "1"

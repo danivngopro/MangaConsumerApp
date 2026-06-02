@@ -89,6 +89,10 @@ def active_download_job_count(conn: sqlite3.Connection) -> int:
 
 def start_limited_scan_state(conn: sqlite3.Connection, active_threshold: int) -> bool:
     with DB_LOCK:
+        try:
+            conn.rollback()
+        except Exception:
+            pass
         conn.execute("BEGIN IMMEDIATE")
         try:
             is_active = get_setting(conn, "limited_scan_active", "0") == "1"
@@ -120,6 +124,10 @@ def set_limited_scan_threshold(conn: sqlite3.Connection, active_threshold: int) 
 
 def claim_limited_scan_batch(conn: sqlite3.Connection) -> tuple[int, int] | None:
     with DB_LOCK:
+        try:
+            conn.rollback()
+        except Exception:
+            pass
         conn.execute("BEGIN IMMEDIATE")
         try:
             if get_setting(conn, "limited_scan_active", "0") != "1":
@@ -144,6 +152,10 @@ def claim_limited_scan_batch(conn: sqlite3.Connection) -> tuple[int, int] | None
 
 def finish_limited_scan_batch(conn: sqlite3.Connection, result: dict) -> None:
     with DB_LOCK:
+        try:
+            conn.rollback()
+        except Exception:
+            pass
         conn.execute("BEGIN IMMEDIATE")
         try:
             _set_setting_uncommitted(conn, "limited_scan_offset", str(result["nextOffset"]))
@@ -615,6 +627,29 @@ def resume_downloads_for_manga(conn: sqlite3.Connection, manga_id: int) -> int:
         return cursor.rowcount
 
 
+def enqueue_all_missing(conn: sqlite3.Connection) -> int:
+    """Bulk-enqueue every chapter that is not downloaded and has no active job."""
+    with DB_LOCK:
+        now = utc_now()
+        cursor = conn.execute(
+            """
+            INSERT INTO jobs(type, status, manga_id, chapter_id, priority, created_at)
+            SELECT 'download', 'queued', c.manga_id, c.id, 0, ?
+            FROM chapters c
+            WHERE c.is_downloaded = 0
+              AND NOT EXISTS (
+                SELECT 1 FROM jobs j
+                WHERE j.type = 'download'
+                  AND j.chapter_id = c.id
+                  AND j.status IN ('queued', 'running', 'paused', 'auto_paused', 'failed')
+              )
+            """,
+            (now,),
+        )
+        conn.commit()
+        return cursor.rowcount
+
+
 def delete_queued_downloads(conn: sqlite3.Connection, zero_percent_only: bool = False) -> int:
     with DB_LOCK:
         if zero_percent_only:
@@ -724,6 +759,16 @@ def update_komga_status(
             (library_id, imported_at, scanned_at, error, manga_id),
         )
         conn.commit()
+
+
+def list_recent_logs(conn: sqlite3.Connection, limit: int = 100) -> list[dict]:
+    return [
+        dict(row)
+        for row in conn.execute(
+            "SELECT id, level, message, created_at FROM logs ORDER BY id DESC LIMIT ?",
+            (max(1, min(500, int(limit))),),
+        ).fetchall()
+    ]
 
 
 def list_manga(conn: sqlite3.Connection) -> list[dict]:

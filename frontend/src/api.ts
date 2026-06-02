@@ -150,6 +150,13 @@ export type AuthStatus = {
   registrationOpen: boolean;
 };
 
+export type LogEntry = {
+  id: number;
+  level: string;
+  message: string;
+  created_at: string;
+};
+
 export type DebugThreads = {
   threads: Array<{
     name: string;
@@ -260,6 +267,7 @@ export const api = {
     request<{ stopRequested: boolean; scanRunning: boolean }>("/api/scan/stop-all", {
       method: "POST",
     }),
+  logs: (limit = 100) => request<LogEntry[]>(`/api/logs?limit=${limit}`),
   debugThreads: () => request<DebugThreads>("/api/debug/threads"),
   stopThread: (threadIdent: number) =>
     request<{ stopped: boolean; reason: string }>(
@@ -308,6 +316,8 @@ export const api = {
     request<{ queuePaused: boolean }>("/api/queue/pause", { method: "POST" }),
   resumeQueue: () =>
     request<{ queuePaused: boolean }>("/api/queue/resume", { method: "POST" }),
+  enqueueMissing: () =>
+    request<{ enqueued: number }>("/api/queue/enqueue-missing", { method: "POST" }),
   deleteQueuedDownloads: () =>
     request<{ removed: number }>("/api/queue/queued", { method: "DELETE" }),
   deleteZeroPercentQueuedDownloads: () =>
