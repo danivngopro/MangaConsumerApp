@@ -137,10 +137,11 @@ def download_chapter(
     image_download_workers: int = 4,
 ) -> str:
     thread_name = threading.current_thread().name
-    manga_folder = library_root / sanitize_filename(manga["title"])
+    manga_folder = Path(manga["download_folder"]) if manga.get("download_folder") else library_root / sanitize_filename(manga["title"])
     manga_folder.mkdir(parents=True, exist_ok=True)
     chapter_label = chapter["chapter_key"]
-    cbz_path = manga_folder / f"{sanitize_filename(manga['title'])} - Chapter {chapter_label}.cbz"
+    file_title = manga.get("download_title") or manga["title"]
+    cbz_path = manga_folder / f"{sanitize_filename(file_title)} - Chapter {chapter_label}.cbz"
 
     if cbz_path.exists():
         repository.mark_downloaded(conn, chapter["id"], str(cbz_path))

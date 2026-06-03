@@ -81,6 +81,14 @@ class KomgaClient:
         library, _created = self.ensure_library_for_book(book_title)
         return library
 
+    def delete_library_for_book(self, book_title: str) -> bool:
+        library = self.find_library_for_book(book_title)
+        if not library:
+            return False
+        response = self.session.delete(f"{self.libraries_url}/{library['id']}", timeout=30)
+        response.raise_for_status()
+        return True
+
     def quick_scan_all(self) -> int:
         libraries = self.list_libraries()
         for library in libraries:

@@ -24,6 +24,8 @@ CREATE TABLE IF NOT EXISTS manga (
     local_chapter_count INTEGER NOT NULL DEFAULT 0,
     missing_count INTEGER NOT NULL DEFAULT 0,
     local_folder TEXT,
+    download_folder_override TEXT,
+    download_title_override TEXT,
     komga_library_id TEXT,
     komga_imported_at TEXT,
     komga_scanned_at TEXT,
@@ -68,6 +70,24 @@ CREATE TABLE IF NOT EXISTS jobs (
     finished_at TEXT
 );
 
+CREATE TABLE IF NOT EXISTS duplicate_candidates (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    candidate_kind TEXT NOT NULL DEFAULT 'remote_local',
+    remote_manga_id INTEGER REFERENCES manga(id) ON DELETE CASCADE,
+    remote_title TEXT NOT NULL,
+    local_title TEXT NOT NULL,
+    local_folder TEXT NOT NULL,
+    local_chapter_count INTEGER NOT NULL DEFAULT 0,
+    remote_chapter_count INTEGER NOT NULL DEFAULT 0,
+    score REAL NOT NULL,
+    reason TEXT NOT NULL,
+    status TEXT NOT NULL DEFAULT 'pending',
+    resolved_at TEXT,
+    created_at TEXT NOT NULL,
+    updated_at TEXT NOT NULL,
+    UNIQUE(candidate_kind, remote_manga_id, local_folder)
+);
+
 CREATE TABLE IF NOT EXISTS logs (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     level TEXT NOT NULL,
@@ -94,6 +114,7 @@ CREATE TABLE IF NOT EXISTS sessions (
 
 INDEXES = """
 CREATE INDEX IF NOT EXISTS idx_jobs_type_status_priority ON jobs(type, status, priority DESC, id ASC);
+CREATE INDEX IF NOT EXISTS idx_duplicate_candidates_status ON duplicate_candidates(status, score DESC);
 """
 
 
@@ -119,6 +140,8 @@ def migrate_db(conn: sqlite3.Connection) -> None:
         "komga_imported_at": "ALTER TABLE manga ADD COLUMN komga_imported_at TEXT",
         "komga_scanned_at": "ALTER TABLE manga ADD COLUMN komga_scanned_at TEXT",
         "komga_last_error": "ALTER TABLE manga ADD COLUMN komga_last_error TEXT",
+        "download_folder_override": "ALTER TABLE manga ADD COLUMN download_folder_override TEXT",
+        "download_title_override": "ALTER TABLE manga ADD COLUMN download_title_override TEXT",
     }
     for column, statement in manga_migrations.items():
         if column not in manga_columns:
@@ -127,3 +150,67 @@ def migrate_db(conn: sqlite3.Connection) -> None:
     jobs_columns = {row["name"] for row in conn.execute("PRAGMA table_info(jobs)").fetchall()}
     if "priority" not in jobs_columns:
         conn.execute("ALTER TABLE jobs ADD COLUMN priority INTEGER NOT NULL DEFAULT 0")
+
+    conn.execute(
+        """
+        CREATE TABLE IF NOT EXISTS duplicate_candidates (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            candidate_kind TEXT NOT NULL DEFAULT 'remote_local',
+            remote_manga_id INTEGER REFERENCES manga(id) ON DELETE CASCADE,
+            remote_title TEXT NOT NULL,
+            local_title TEXT NOT NULL,
+            local_folder TEXT NOT NULL,
+            local_chapter_count INTEGER NOT NULL DEFAULT 0,
+            remote_chapter_count INTEGER NOT NULL DEFAULT 0,
+            score REAL NOT NULL,
+            reason TEXT NOT NULL,
+            status TEXT NOT NULL DEFAULT 'pending',
+            resolved_at TEXT,
+            created_at TEXT NOT NULL,
+            updated_at TEXT NOT NULL,
+            UNIQUE(candidate_kind, remote_manga_id, local_folder)
+        )
+        """
+    )
+    duplicate_columns = {row["name"] for row in conn.execute("PRAGMA table_info(duplicate_candidates)").fetchall()}
+    if "candidate_kind" not in duplicate_columns:
+        conn.execute("ALTER TABLE duplicate_candidates ADD COLUMN candidate_kind TEXT NOT NULL DEFAULT 'remote_local'")
+    duplicate_info = {row["name"]: row for row in conn.execute("PRAGMA table_info(duplicate_candidates)").fetchall()}
+    if duplicate_info.get("remote_manga_id") and int(duplicate_info["remote_manga_id"]["notnull"]):
+        conn.execute("ALTER TABLE duplicate_candidates RENAME TO duplicate_candidates_old")
+        conn.execute(
+            """
+            CREATE TABLE duplicate_candidates (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                candidate_kind TEXT NOT NULL DEFAULT 'remote_local',
+                remote_manga_id INTEGER REFERENCES manga(id) ON DELETE CASCADE,
+                remote_title TEXT NOT NULL,
+                local_title TEXT NOT NULL,
+                local_folder TEXT NOT NULL,
+                local_chapter_count INTEGER NOT NULL DEFAULT 0,
+                remote_chapter_count INTEGER NOT NULL DEFAULT 0,
+                score REAL NOT NULL,
+                reason TEXT NOT NULL,
+                status TEXT NOT NULL DEFAULT 'pending',
+                resolved_at TEXT,
+                created_at TEXT NOT NULL,
+                updated_at TEXT NOT NULL,
+                UNIQUE(candidate_kind, remote_manga_id, local_folder)
+            )
+            """
+        )
+        conn.execute(
+            """
+            INSERT INTO duplicate_candidates(
+                id, candidate_kind, remote_manga_id, remote_title, local_title,
+                local_folder, local_chapter_count, remote_chapter_count, score,
+                reason, status, resolved_at, created_at, updated_at
+            )
+            SELECT id, COALESCE(candidate_kind, 'remote_local'), remote_manga_id,
+                   remote_title, local_title, local_folder, local_chapter_count,
+                   remote_chapter_count, score, reason, status, resolved_at,
+                   created_at, updated_at
+            FROM duplicate_candidates_old
+            """
+        )
+        conn.execute("DROP TABLE duplicate_candidates_old")

@@ -5,6 +5,7 @@ import sqlite3
 from pathlib import Path
 
 from . import repository
+from .duplicates import title_similarity
 from .utils import chapter_key, normalize_title
 
 
@@ -33,6 +34,7 @@ def scan_library(conn: sqlite3.Connection, library_root: Path) -> dict:
     chapter_count = 0
     folders_seen = 0
     comic_files_seen = 0
+    scanned_items: list[dict] = []
 
     for folder in sorted([item for item in library_root.iterdir() if item.is_dir()]):
         folders_seen += 1
@@ -55,8 +57,34 @@ def scan_library(conn: sqlite3.Connection, library_root: Path) -> dict:
             chapters = [str(index + 1) for index, _ in enumerate(comic_files)]
 
         repository.upsert_inventory(conn, folder.name, str(folder), chapters)
+        scanned_items.append(
+            {
+                "title": folder.name,
+                "folder_path": str(folder),
+                "chapter_count": len(set(chapters)),
+            }
+        )
         book_count += 1
         chapter_count += len(set(chapters))
+
+    for index, left in enumerate(scanned_items):
+        for right in scanned_items[index + 1:]:
+            score, reason = title_similarity(left["title"], right["title"])
+            if score < 0.82:
+                continue
+            keep, delete = left, right
+            if int(right["chapter_count"]) > int(left["chapter_count"]):
+                keep, delete = right, left
+            repository.upsert_local_duplicate_candidate(
+                conn,
+                keep["title"],
+                delete["title"],
+                delete["folder_path"],
+                int(delete["chapter_count"]),
+                int(keep["chapter_count"]),
+                score,
+                reason,
+            )
 
     repository.log(
         conn,

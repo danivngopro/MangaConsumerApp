@@ -160,6 +160,25 @@ export type LogEntry = {
   created_at: string;
 };
 
+export type DuplicateCandidate = {
+  id: number;
+  candidate_kind: "remote_local" | "local_local";
+  remote_manga_id: number | null;
+  remote_title: string;
+  local_title: string;
+  local_folder: string;
+  local_chapter_count: number;
+  remote_chapter_count: number;
+  score: number;
+  reason: string;
+  status: "pending" | "confirmed_exists" | "confirmed_new" | "ignored";
+  resolved_at: string | null;
+  created_at: string;
+  updated_at: string;
+  download_folder_override: string | null;
+  download_title_override: string | null;
+};
+
 export type DebugThreads = {
   threads: Array<{
     name: string;
@@ -235,6 +254,20 @@ export const api = {
   bookDetail: (mangaId: number) => request<BookDetail>(`/api/books/${mangaId}`),
   jobs: () => request<Job[]>("/api/jobs"),
   failedJobs: () => request<Job[]>("/api/jobs/failed"),
+  duplicates: () => request<DuplicateCandidate[]>("/api/duplicates"),
+  resolveDuplicate: (candidateId: number, status: "confirmed_exists" | "confirmed_new" | "ignored") =>
+    request<{ candidateId: number; status: string; enqueued: number }>(
+      `/api/duplicates/${candidateId}/resolve`,
+      {
+        method: "POST",
+        body: JSON.stringify({ status }),
+      },
+    ),
+  deleteDuplicateLocal: (candidateId: number) =>
+    request<{ deleted: boolean; folder: string; komgaDeleted: boolean }>(
+      `/api/duplicates/${candidateId}/local`,
+      { method: "DELETE" },
+    ),
   progress: () => request<DownloadProgress[]>("/api/progress"),
   asuraFilters: () => request<BrowseFilters>("/api/asura/filters"),
   asuraSearch: (payload: BrowseSearchPayload) =>

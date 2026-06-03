@@ -254,6 +254,10 @@ def get_inventory_map(conn: sqlite3.Connection) -> dict[str, dict]:
     return result
 
 
+def get_inventory_items(conn: sqlite3.Connection) -> list[dict]:
+    return list(get_inventory_map(conn).values())
+
+
 def upsert_manga(conn: sqlite3.Connection, manga: dict) -> int:
     now = utc_now()
     title = fix_mojibake(manga["title"])
@@ -303,6 +307,21 @@ def update_manga_scan_counts(
         WHERE id = ?
         """,
         (local_count, missing_count, local_folder, utc_now(), utc_now(), manga_id),
+    )
+    conn.commit()
+
+
+def set_manga_download_override(conn: sqlite3.Connection, manga_id: int, folder: str | None, title: str | None) -> None:
+    conn.execute(
+        """
+        UPDATE manga
+        SET download_folder_override = ?,
+            download_title_override = ?,
+            local_folder = COALESCE(?, local_folder),
+            updated_at = ?
+        WHERE id = ?
+        """,
+        (folder, title, folder, utc_now(), manga_id),
     )
     conn.commit()
 
@@ -454,6 +473,8 @@ def get_download_target(conn: sqlite3.Connection, job_id: int) -> tuple[dict, di
             m.title AS manga_title,
             m.url AS manga_url,
             m.local_folder AS local_folder,
+            m.download_folder_override AS download_folder_override,
+            m.download_title_override AS download_title_override,
             c.id AS chapter_id,
             c.chapter_key,
             c.label,
@@ -474,6 +495,8 @@ def get_download_target(conn: sqlite3.Connection, job_id: int) -> tuple[dict, di
             "title": data["manga_title"],
             "url": data["manga_url"],
             "local_folder": data["local_folder"],
+            "download_folder": data["download_folder_override"] or data["local_folder"],
+            "download_title": data["download_title_override"] or data["manga_title"],
         },
         {
             "id": data["chapter_id"],
@@ -650,6 +673,11 @@ def enqueue_all_missing(conn: sqlite3.Connection) -> int:
             FROM chapters c
             WHERE c.is_downloaded = 0
               AND NOT EXISTS (
+                SELECT 1 FROM duplicate_candidates dc
+                WHERE dc.remote_manga_id = c.manga_id
+                  AND dc.status = 'pending'
+              )
+              AND NOT EXISTS (
                 SELECT 1 FROM jobs j
                 WHERE j.type = 'download'
                   AND j.chapter_id = c.id
@@ -660,6 +688,214 @@ def enqueue_all_missing(conn: sqlite3.Connection) -> int:
         )
         conn.commit()
         return cursor.rowcount
+
+
+def upsert_duplicate_candidate(
+    conn: sqlite3.Connection,
+    manga_id: int,
+    remote_title: str,
+    local_title: str,
+    local_folder: str,
+    local_chapter_count: int,
+    remote_chapter_count: int,
+    score: float,
+    reason: str,
+) -> dict:
+    now = utc_now()
+    with DB_LOCK:
+        existing = conn.execute(
+            """
+            SELECT id, status FROM duplicate_candidates
+            WHERE candidate_kind = 'remote_local'
+              AND remote_manga_id = ?
+              AND local_folder = ?
+            """,
+            (manga_id, local_folder),
+        ).fetchone()
+        if existing:
+            next_status = existing["status"] if existing["status"] in {"confirmed_exists", "confirmed_new", "ignored"} else "pending"
+            conn.execute(
+                """
+                UPDATE duplicate_candidates
+                SET remote_title = ?,
+                    local_title = ?,
+                    local_chapter_count = ?,
+                    remote_chapter_count = ?,
+                    score = ?,
+                    reason = ?,
+                    status = ?,
+                    updated_at = ?
+                WHERE id = ?
+                """,
+                (remote_title, local_title, local_chapter_count, remote_chapter_count, score, reason, next_status, now, existing["id"]),
+            )
+        else:
+            conn.execute(
+                """
+                INSERT INTO duplicate_candidates(
+                    candidate_kind, remote_manga_id, remote_title, local_title, local_folder,
+                    local_chapter_count, remote_chapter_count, score, reason,
+                    status, created_at, updated_at
+                )
+                VALUES ('remote_local', ?, ?, ?, ?, ?, ?, ?, ?, 'pending', ?, ?)
+                """,
+                (manga_id, remote_title, local_title, local_folder, local_chapter_count, remote_chapter_count, score, reason, now, now),
+            )
+        conn.commit()
+    return get_duplicate_candidate_for_manga(conn, manga_id, local_folder) or {}
+
+
+def get_duplicate_candidate_for_manga(conn: sqlite3.Connection, manga_id: int, local_folder: str) -> dict | None:
+    row = conn.execute(
+        "SELECT * FROM duplicate_candidates WHERE candidate_kind = 'remote_local' AND remote_manga_id = ? AND local_folder = ?",
+        (manga_id, local_folder),
+    ).fetchone()
+    return clean_row(row) if row else None
+
+
+def upsert_local_duplicate_candidate(
+    conn: sqlite3.Connection,
+    keep_title: str,
+    delete_title: str,
+    delete_folder: str,
+    delete_chapter_count: int,
+    keep_chapter_count: int,
+    score: float,
+    reason: str,
+) -> None:
+    now = utc_now()
+    with DB_LOCK:
+        existing = conn.execute(
+            """
+            SELECT id FROM duplicate_candidates
+            WHERE candidate_kind = 'local_local'
+              AND remote_title = ?
+              AND local_folder = ?
+            """,
+            (keep_title, delete_folder),
+        ).fetchone()
+        if existing:
+            conn.execute(
+                """
+                UPDATE duplicate_candidates
+                SET local_title = ?,
+                    local_chapter_count = ?,
+                    remote_chapter_count = ?,
+                    score = ?,
+                    reason = ?,
+                    updated_at = ?
+                WHERE id = ?
+                """,
+                (delete_title, delete_chapter_count, keep_chapter_count, score, reason, now, existing["id"]),
+            )
+        else:
+            conn.execute(
+                """
+                INSERT INTO duplicate_candidates(
+                    candidate_kind, remote_manga_id, remote_title, local_title,
+                    local_folder, local_chapter_count, remote_chapter_count,
+                    score, reason, status, created_at, updated_at
+                )
+                VALUES ('local_local', NULL, ?, ?, ?, ?, ?, ?, ?, 'pending', ?, ?)
+                """,
+                (keep_title, delete_title, delete_folder, delete_chapter_count, keep_chapter_count, score, reason, now, now),
+            )
+        conn.commit()
+
+
+def list_duplicate_candidates(conn: sqlite3.Connection) -> list[dict]:
+    return [
+        clean_row(row)
+        for row in conn.execute(
+            """
+            SELECT dc.*, m.local_folder AS remote_local_folder,
+                   m.download_folder_override, m.download_title_override
+            FROM duplicate_candidates dc
+            LEFT JOIN manga m ON m.id = dc.remote_manga_id
+            ORDER BY
+                CASE dc.status
+                    WHEN 'pending' THEN 0
+                    WHEN 'confirmed_exists' THEN 1
+                    WHEN 'confirmed_new' THEN 2
+                    ELSE 3
+                END,
+                dc.score DESC,
+                dc.updated_at DESC
+            """
+        ).fetchall()
+    ]
+
+
+def resolve_duplicate_candidate(conn: sqlite3.Connection, candidate_id: int, status: str) -> dict:
+    if status not in {"confirmed_exists", "confirmed_new", "ignored"}:
+        raise ValueError("invalid duplicate status")
+    with DB_LOCK:
+        row = conn.execute("SELECT * FROM duplicate_candidates WHERE id = ?", (candidate_id,)).fetchone()
+        if row is None:
+            raise ValueError("duplicate candidate not found")
+        candidate = dict(row)
+        now = utc_now()
+        if candidate.get("candidate_kind") == "local_local":
+            conn.execute(
+                "UPDATE duplicate_candidates SET status = ?, resolved_at = ?, updated_at = ? WHERE id = ?",
+                (status, now, now, candidate_id),
+            )
+            conn.commit()
+            return {"candidateId": candidate_id, "status": status, "enqueued": 0}
+        conn.execute(
+            "UPDATE duplicate_candidates SET status = ?, resolved_at = ?, updated_at = ? WHERE id = ?",
+            (status, now, now, candidate_id),
+        )
+        if status == "confirmed_exists":
+            conn.execute(
+                """
+                UPDATE manga
+                SET download_folder_override = ?,
+                    download_title_override = ?,
+                    local_folder = ?,
+                    local_chapter_count = ?,
+                    missing_count = MAX(0, remote_chapter_count - ?),
+                    updated_at = ?
+                WHERE id = ?
+                """,
+                (
+                    candidate["local_folder"],
+                    candidate["local_title"],
+                    candidate["local_folder"],
+                    int(candidate["local_chapter_count"] or 0),
+                    int(candidate["local_chapter_count"] or 0),
+                    now,
+                    candidate["remote_manga_id"],
+                ),
+            )
+        elif status == "confirmed_new":
+            conn.execute(
+                """
+                UPDATE manga
+                SET download_folder_override = NULL,
+                    download_title_override = NULL,
+                    updated_at = ?
+                WHERE id = ?
+                """,
+                (now, candidate["remote_manga_id"]),
+            )
+        conn.commit()
+
+    enqueued = 0
+    if status in {"confirmed_exists", "confirmed_new"}:
+        manga = conn.execute("SELECT * FROM manga WHERE id = ?", (candidate["remote_manga_id"],)).fetchone()
+        if manga:
+            local_keys = set()
+            if status == "confirmed_exists":
+                inventory = get_inventory_map(conn)
+                local = inventory.get(normalize_title(candidate["local_title"]))
+                if local:
+                    local_keys = local["chapters"]
+            missing = find_missing_chapters(conn, int(candidate["remote_manga_id"]), local_keys)
+            for chapter in missing:
+                enqueue_download(conn, int(candidate["remote_manga_id"]), int(chapter["id"]))
+                enqueued += 1
+    return {"candidateId": candidate_id, "status": status, "enqueued": enqueued}
 
 
 def reset_missing_chapters(conn: sqlite3.Connection) -> dict:

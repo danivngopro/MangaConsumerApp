@@ -36,6 +36,10 @@ class TopUpThresholdRequest(BaseModel):
     threshold: int
 
 
+class DuplicateResolveRequest(BaseModel):
+    status: str
+
+
 class SettingsRequest(BaseModel):
     autoScanEveryDays: int
     downloadConcurrency: int
@@ -258,6 +262,51 @@ def recent_logs(limit: int = 100, _user: dict = Depends(authenticated_user)) -> 
 @app.get("/api/jobs/failed")
 def failed_jobs(_user: dict = Depends(authenticated_user)) -> list[dict]:
     return repository.list_failed_download_jobs(conn)
+
+
+@app.get("/api/duplicates")
+def duplicate_candidates(_user: dict = Depends(authenticated_user)) -> list[dict]:
+    return repository.list_duplicate_candidates(conn)
+
+
+@app.post("/api/duplicates/{candidate_id}/resolve")
+def resolve_duplicate(candidate_id: int, payload: DuplicateResolveRequest, _user: dict = Depends(authenticated_user)) -> dict:
+    try:
+        result = repository.resolve_duplicate_candidate(conn, candidate_id, payload.status)
+        repository.log(conn, "info", f"Duplicate candidate {candidate_id} resolved as {payload.status}; enqueued {result['enqueued']}")
+        return result
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+
+@app.delete("/api/duplicates/{candidate_id}/local")
+def delete_duplicate_local(candidate_id: int, _user: dict = Depends(authenticated_user)) -> dict:
+    row = conn.execute("SELECT * FROM duplicate_candidates WHERE id = ?", (candidate_id,)).fetchone()
+    if row is None:
+        raise HTTPException(status_code=404, detail="duplicate candidate not found")
+    folder = Path(row["local_folder"])
+    root = settings.library_root.resolve()
+    try:
+        target = folder.resolve()
+    except FileNotFoundError:
+        target = folder
+    if root not in target.parents and target != root:
+        raise HTTPException(status_code=400, detail="duplicate folder is outside the configured library root")
+    try:
+        komga_deleted = komga_client.delete_library_for_book(row["local_title"])
+        if folder.exists():
+            shutil.rmtree(folder)
+        now = repository.utc_now()
+        conn.execute(
+            "UPDATE duplicate_candidates SET status = 'ignored', resolved_at = ?, updated_at = ? WHERE id = ?",
+            (now, now, candidate_id),
+        )
+        conn.commit()
+        repository.log(conn, "info", f"Deleted duplicate local folder {folder}; Komga library deleted={komga_deleted}")
+        return {"deleted": True, "folder": str(folder), "komgaDeleted": komga_deleted}
+    except Exception as exc:
+        repository.log(conn, "error", f"Duplicate local delete failed for {folder}: {exc}")
+        raise HTTPException(status_code=502, detail=str(exc)) from exc
 
 
 @app.get("/api/debug/threads")

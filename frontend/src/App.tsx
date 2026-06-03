@@ -9,6 +9,7 @@ import {
   RefreshCw,
   Search,
   Settings,
+  CopyX,
 } from "lucide-react";
 import {
   api,
@@ -20,10 +21,11 @@ import {
 } from "./api";
 import { DashboardPage } from "./pages/DashboardPage";
 import { DownloadsPage } from "./pages/DownloadsPage";
+import { DuplicatesPage } from "./pages/DuplicatesPage";
 import { SearchPage } from "./pages/SearchPage";
 import { SettingsPage } from "./pages/SettingsPage";
 
-type Tab = "dashboard" | "downloads" | "search" | "settings";
+type Tab = "dashboard" | "downloads" | "duplicates" | "search" | "settings";
 
 const emptySummary: Summary = {
   knownManga: 0,
@@ -165,6 +167,7 @@ export function App() {
   const tabs: Array<{ id: Tab; label: string; icon: React.ReactElement; badge?: number }> = [
     { id: "dashboard", label: "Dashboard", icon: <LayoutDashboard size={15} /> },
     { id: "downloads", label: "Downloads", icon: <Download size={15} />, badge: activeDownloads || undefined },
+    { id: "duplicates", label: "Duplicates", icon: <CopyX size={15} /> },
     { id: "search",    label: "Search",    icon: <Search size={15} /> },
     { id: "settings",  label: "Settings",  icon: <Settings size={15} /> },
   ];
@@ -267,6 +270,7 @@ export function App() {
             <DashboardPage {...shared} debugThreads={debugThreads} />
           )}
           {activeTab === "downloads" && <DownloadsPage {...shared} />}
+          {activeTab === "duplicates" && <DuplicatesPage {...shared} />}
           {activeTab === "search" && (
             <SearchPage {...shared} browseFilters={browseFilters} />
           )}

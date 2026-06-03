@@ -4,6 +4,7 @@ import sqlite3
 from collections.abc import Callable
 
 from .asura import AsuraClient, AsuraSeries
+from .duplicates import best_title_match
 from .library import local_match_for_title, scan_library
 from . import repository
 
@@ -222,8 +223,44 @@ def scan_one_series(
     )
 
     local = local_match_for_title(inventory, series.title)
+    duplicate_match = local or best_title_match(series.title, inventory.values())
+    if duplicate_match and duplicate_match["title"] == series.title:
+        duplicate_match = None
+    if duplicate_match:
+        existing_candidate = repository.get_duplicate_candidate_for_manga(conn, manga_id, duplicate_match["folder_path"])
+        if existing_candidate and existing_candidate.get("status") == "confirmed_exists":
+            local = duplicate_match
+            repository.set_manga_download_override(conn, manga_id, local["folder_path"], local["title"])
     local_keys = local["chapters"] if local else set()
     missing = repository.find_missing_chapters(conn, manga_id, local_keys)
+    duplicate_status = None
+    if missing:
+        duplicate_status = _handle_duplicate_candidate(
+            conn,
+            manga_id,
+            series.title,
+            len(chapters),
+            inventory,
+            duplicate_match,
+        )
+        if duplicate_status == "pending":
+            repository.update_manga_scan_counts(
+                conn,
+                manga_id,
+                len(local_keys),
+                len(missing),
+                local["folder_path"] if local else None,
+            )
+            repository.log(conn, "info", f"Duplicate candidate postponed: {series.title}")
+            return {
+                "mangaId": manga_id,
+                "title": series.title,
+                "remoteChapters": len(chapters),
+                "localChapters": len(local_keys),
+                "missingChapters": len(missing),
+                "enqueued": 0,
+                "duplicateStatus": "pending",
+            }
     for chapter in missing:
         if should_stop and should_stop():
             break
@@ -243,6 +280,7 @@ def scan_one_series(
         "localChapters": len(local_keys),
         "missingChapters": len(missing),
         "enqueued": len(missing),
+        "duplicateStatus": duplicate_status,
     }
 
 
@@ -291,8 +329,43 @@ def scan_one_series_deferred(
     )
 
     local = local_match_for_title(inventory, series.title)
+    duplicate_match = local or best_title_match(series.title, inventory.values())
+    if duplicate_match and duplicate_match["title"] == series.title:
+        duplicate_match = None
+    if duplicate_match:
+        existing_candidate = repository.get_duplicate_candidate_for_manga(conn, manga_id, duplicate_match["folder_path"])
+        if existing_candidate and existing_candidate.get("status") == "confirmed_exists":
+            local = duplicate_match
+            repository.set_manga_download_override(conn, manga_id, local["folder_path"], local["title"])
     local_keys = local["chapters"] if local else set()
     missing = repository.find_missing_chapters(conn, manga_id, local_keys)
+    duplicate_status = None
+    if missing:
+        duplicate_status = _handle_duplicate_candidate(
+            conn,
+            manga_id,
+            series.title,
+            len(chapters),
+            inventory,
+            duplicate_match,
+        )
+        if duplicate_status == "pending":
+            repository.update_manga_scan_counts(
+                conn,
+                manga_id,
+                len(local_keys),
+                len(missing),
+                local["folder_path"] if local else None,
+            )
+            return {
+                "mangaId": manga_id,
+                "title": series.title,
+                "remoteChapters": len(chapters),
+                "localChapters": len(local_keys),
+                "missingChapterIds": [],
+                "duplicateStatus": "pending",
+                "stopped": False,
+            }
 
     missing_chapter_ids = [ch["id"] for ch in missing]
 
@@ -309,8 +382,39 @@ def scan_one_series_deferred(
         "remoteChapters": len(chapters),
         "localChapters": len(local_keys),
         "missingChapterIds": missing_chapter_ids,
+        "duplicateStatus": duplicate_status,
         "stopped": False,
     }
+
+
+def _handle_duplicate_candidate(
+    conn: sqlite3.Connection,
+    manga_id: int,
+    remote_title: str,
+    remote_chapter_count: int,
+    inventory: dict[str, dict],
+    local: dict | None,
+) -> str | None:
+    match = local or best_title_match(remote_title, inventory.values())
+    if not match:
+        return None
+    if match["title"] == remote_title:
+        return None
+    candidate = repository.upsert_duplicate_candidate(
+        conn,
+        manga_id,
+        remote_title,
+        match["title"],
+        match["folder_path"],
+        int(match["chapter_count"]),
+        remote_chapter_count,
+        float(match.get("score", 1.0)),
+        str(match.get("reason", "local title match")),
+    )
+    status = candidate.get("status")
+    if status == "confirmed_exists":
+        repository.set_manga_download_override(conn, manga_id, match["folder_path"], match["title"])
+    return status
 
 
 def scan_priority_books(
