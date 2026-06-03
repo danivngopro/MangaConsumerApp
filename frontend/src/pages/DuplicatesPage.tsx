@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react";
-import { AlertTriangle, Check, RefreshCw, Trash2, X } from "lucide-react";
+import { AlertTriangle, Check, RefreshCw, Search, Trash2, X } from "lucide-react";
 import { api, DuplicateCandidate } from "../api";
 import { StatCard } from "../components/shared";
 import type { SharedProps } from "../App";
@@ -10,6 +10,11 @@ export function DuplicatesPage({ loading, runAction }: SharedProps) {
 
   async function refreshDuplicates() {
     setItems(await api.duplicates());
+  }
+
+  async function scanLocalDuplicates() {
+    await runAction("Scan local duplicates", api.libraryScan);
+    await refreshDuplicates();
   }
 
   useEffect(() => {
@@ -46,6 +51,9 @@ export function DuplicatesPage({ loading, runAction }: SharedProps) {
           {pending > 0 && <span className="tag tag-yellow">{pending} pending</span>}
         </div>
         <div className="page-actions">
+          <button className="btn-primary btn-sm" onClick={scanLocalDuplicates} disabled={loading}>
+            <Search size={13} /> Scan local duplicates
+          </button>
           <button className="btn-ghost btn-sm" onClick={refreshDuplicates} disabled={loading}>
             <RefreshCw size={13} /> Refresh
           </button>
