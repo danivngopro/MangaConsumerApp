@@ -22,6 +22,16 @@ def clean_row(row: sqlite3.Row | dict) -> dict:
     return item
 
 
+def clean_manga_row(row: sqlite3.Row | dict) -> dict:
+    item = clean_row(row)
+    try:
+        item["asura_genres"] = json.loads(item.get("asura_genres_json") or "[]")
+    except json.JSONDecodeError:
+        item["asura_genres"] = []
+    item.pop("asura_genres_json", None)
+    return item
+
+
 def log(conn: sqlite3.Connection, level: str, message: str) -> None:
     with DB_LOCK:
         conn.execute(
@@ -266,8 +276,9 @@ def upsert_manga(conn: sqlite3.Connection, manga: dict) -> int:
         """
         INSERT INTO manga(
             slug, title, normalized_title, url, cover_url, status,
-            remote_chapter_count, updated_at
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+            remote_chapter_count, asura_type, asura_author, asura_artist,
+            asura_genres_json, asura_rating, asura_last_chapter_at, updated_at
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         ON CONFLICT(slug) DO UPDATE SET
             title = excluded.title,
             normalized_title = excluded.normalized_title,
@@ -275,6 +286,12 @@ def upsert_manga(conn: sqlite3.Connection, manga: dict) -> int:
             cover_url = excluded.cover_url,
             status = excluded.status,
             remote_chapter_count = excluded.remote_chapter_count,
+            asura_type = COALESCE(excluded.asura_type, asura_type),
+            asura_author = COALESCE(excluded.asura_author, asura_author),
+            asura_artist = COALESCE(excluded.asura_artist, asura_artist),
+            asura_genres_json = CASE WHEN excluded.asura_genres_json != '[]' THEN excluded.asura_genres_json ELSE asura_genres_json END,
+            asura_rating = COALESCE(excluded.asura_rating, asura_rating),
+            asura_last_chapter_at = COALESCE(excluded.asura_last_chapter_at, asura_last_chapter_at),
             updated_at = excluded.updated_at
         """,
         (
@@ -285,6 +302,12 @@ def upsert_manga(conn: sqlite3.Connection, manga: dict) -> int:
             manga.get("cover_url"),
             manga.get("status"),
             int(manga.get("remote_chapter_count") or 0),
+            manga.get("type") or manga.get("asura_type"),
+            manga.get("author") or manga.get("asura_author"),
+            manga.get("artist") or manga.get("asura_artist"),
+            json.dumps(manga.get("genres") or manga.get("asura_genres") or []),
+            manga.get("rating") or manga.get("asura_rating"),
+            manga.get("last_chapter_at") or manga.get("asura_last_chapter_at"),
             now,
         ),
     )
@@ -324,6 +347,41 @@ def set_manga_download_override(conn: sqlite3.Connection, manga_id: int, folder:
         (folder, title, folder, utc_now(), manga_id),
     )
     conn.commit()
+
+
+def update_manga_metadata_sync_status(conn: sqlite3.Connection, manga_id: int, series_id: str | None, error: str | None) -> None:
+    conn.execute(
+        """
+        UPDATE manga
+        SET komga_series_id = COALESCE(?, komga_series_id),
+            metadata_synced_at = CASE WHEN ? IS NULL THEN ? ELSE metadata_synced_at END,
+            metadata_last_error = ?,
+            updated_at = ?
+        WHERE id = ?
+        """,
+        (series_id, error, utc_now(), error, utc_now(), manga_id),
+    )
+    conn.commit()
+
+
+def metadata_sync_candidates(conn: sqlite3.Connection) -> list[dict]:
+    return [
+        clean_manga_row(row)
+        for row in conn.execute(
+            """
+            SELECT *
+            FROM manga
+            WHERE COALESCE(asura_genres_json, '[]') != '[]'
+               OR asura_type IS NOT NULL
+               OR asura_author IS NOT NULL
+               OR asura_artist IS NOT NULL
+            ORDER BY
+                CASE WHEN metadata_last_error IS NOT NULL THEN 0 ELSE 1 END,
+                COALESCE(metadata_synced_at, '') ASC,
+                title COLLATE NOCASE
+            """
+        ).fetchall()
+    ]
 
 
 def upsert_chapters(conn: sqlite3.Connection, manga_id: int, chapters: Iterable[dict]) -> None:
@@ -1063,7 +1121,7 @@ def list_recent_logs(conn: sqlite3.Connection, limit: int = 100) -> list[dict]:
 
 def list_manga(conn: sqlite3.Connection) -> list[dict]:
     return [
-        clean_row(row)
+        clean_manga_row(row)
         for row in conn.execute(
             """
             SELECT * FROM manga
@@ -1075,7 +1133,7 @@ def list_manga(conn: sqlite3.Connection) -> list[dict]:
 
 def get_manga_detail(conn: sqlite3.Connection, manga_id: int) -> dict | None:
     manga_row = conn.execute("SELECT * FROM manga WHERE id = ?", (manga_id,)).fetchone()
-    manga = clean_row(manga_row) if manga_row else None
+    manga = clean_manga_row(manga_row) if manga_row else None
     if manga is None:
         return None
     chapters = [

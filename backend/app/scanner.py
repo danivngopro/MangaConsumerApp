@@ -214,6 +214,12 @@ def scan_one_series(
             "cover_url": series.cover_url or series_hint.cover_url,
             "status": series.status or series_hint.status,
             "remote_chapter_count": series.remote_chapter_count or len(chapters),
+            "type": series.type or series_hint.type,
+            "author": series.author or series_hint.author,
+            "artist": series.artist or series_hint.artist,
+            "genres": series.genres or series_hint.genres or [],
+            "rating": series.rating or series_hint.rating,
+            "last_chapter_at": series.last_chapter_at or series_hint.last_chapter_at,
         },
     )
     repository.upsert_chapters(
@@ -320,6 +326,12 @@ def scan_one_series_deferred(
             "cover_url": series.cover_url or series_hint.cover_url,
             "status": series.status or series_hint.status,
             "remote_chapter_count": series.remote_chapter_count or len(chapters),
+            "type": series.type or series_hint.type,
+            "author": series.author or series_hint.author,
+            "artist": series.artist or series_hint.artist,
+            "genres": series.genres or series_hint.genres or [],
+            "rating": series.rating or series_hint.rating,
+            "last_chapter_at": series.last_chapter_at or series_hint.last_chapter_at,
         },
     )
     repository.upsert_chapters(
@@ -445,6 +457,12 @@ def scan_priority_books(
                 cover_url=item.get("cover_url"),
                 status=item.get("status"),
                 remote_chapter_count=int(item.get("chapter_count") or 0),
+                type=item.get("type"),
+                author=item.get("author"),
+                artist=item.get("artist"),
+                genres=item.get("genres") or [],
+                rating=item.get("rating"),
+                last_chapter_at=item.get("last_chapter_at"),
             )
             result_item = scan_one_series(conn, client, hint, inventory, priority=1, should_stop=should_stop)
             scanned += 1

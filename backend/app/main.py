@@ -18,6 +18,7 @@ from .config import load_settings
 from .database import connect, init_db
 from .komga import KomgaClient, KomgaSettings
 from .library import scan_library
+from .metadata_sync import sync_manga_metadata_to_komga
 from .queue import DownloadQueue
 from .scanner import scan_specific, scan_priority_books
 from .scheduler import ScanScheduler
@@ -38,6 +39,10 @@ class TopUpThresholdRequest(BaseModel):
 
 class DuplicateResolveRequest(BaseModel):
     status: str
+
+
+class MetadataSyncRequest(BaseModel):
+    mangaIds: list[int] | None = None
 
 
 class SettingsRequest(BaseModel):
@@ -267,6 +272,33 @@ def failed_jobs(_user: dict = Depends(authenticated_user)) -> list[dict]:
 @app.get("/api/duplicates")
 def duplicate_candidates(_user: dict = Depends(authenticated_user)) -> list[dict]:
     return repository.list_duplicate_candidates(conn)
+
+
+@app.get("/api/metadata/candidates")
+def metadata_candidates(_user: dict = Depends(authenticated_user)) -> list[dict]:
+    return repository.metadata_sync_candidates(conn)
+
+
+@app.post("/api/metadata/sync")
+def sync_metadata(payload: MetadataSyncRequest | None = None, _user: dict = Depends(authenticated_user)) -> dict:
+    candidates = repository.metadata_sync_candidates(conn)
+    requested = set(int(item) for item in (payload.mangaIds if payload and payload.mangaIds else []))
+    if requested:
+        candidates = [item for item in candidates if int(item["id"]) in requested]
+    synced = 0
+    needs_review = 0
+    errors: list[str] = []
+    for item in candidates:
+        try:
+            result = sync_manga_metadata_to_komga(conn, komga_client, int(item["id"]))
+            if result.get("synced"):
+                synced += 1
+            if result.get("needsReview"):
+                needs_review += 1
+        except Exception as exc:
+            errors.append(f"{item['title']}: {exc}")
+    repository.log(conn, "info", f"Metadata sync complete: {synced} synced, {needs_review} need review, {len(errors)} errors")
+    return {"synced": synced, "needsReview": needs_review, "errors": errors}
 
 
 @app.post("/api/duplicates/{candidate_id}/resolve")

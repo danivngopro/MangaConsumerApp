@@ -29,6 +29,12 @@ class AsuraSeries:
     cover_url: str | None
     status: str | None
     remote_chapter_count: int
+    type: str | None = None
+    author: str | None = None
+    artist: str | None = None
+    genres: list | None = None
+    rating: float | None = None
+    last_chapter_at: str | None = None
 
 
 @dataclass(frozen=True)

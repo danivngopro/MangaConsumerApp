@@ -179,6 +179,18 @@ export type DuplicateCandidate = {
   download_title_override: string | null;
 };
 
+export type MetadataCandidate = Book & {
+  asura_type: string | null;
+  asura_author: string | null;
+  asura_artist: string | null;
+  asura_genres: Array<{ name?: string; slug?: string } | string>;
+  asura_rating: number | null;
+  asura_last_chapter_at: string | null;
+  komga_series_id: string | null;
+  metadata_synced_at: string | null;
+  metadata_last_error: string | null;
+};
+
 export type DebugThreads = {
   threads: Array<{
     name: string;
@@ -267,6 +279,15 @@ export const api = {
     request<{ deleted: boolean; folder: string; komgaDeleted: boolean }>(
       `/api/duplicates/${candidateId}/local`,
       { method: "DELETE" },
+    ),
+  metadataCandidates: () => request<MetadataCandidate[]>("/api/metadata/candidates"),
+  syncMetadata: (mangaIds?: number[]) =>
+    request<{ synced: number; needsReview: number; errors: string[] }>(
+      "/api/metadata/sync",
+      {
+        method: "POST",
+        body: JSON.stringify({ mangaIds: mangaIds ?? null }),
+      },
     ),
   progress: () => request<DownloadProgress[]>("/api/progress"),
   asuraFilters: () => request<BrowseFilters>("/api/asura/filters"),

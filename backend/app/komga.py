@@ -89,6 +89,43 @@ class KomgaClient:
         response.raise_for_status()
         return True
 
+    def list_series_for_library(self, library_id: str) -> list[dict]:
+        payload = {"condition": {"libraryId": {"value": library_id}}}
+        response = self.session.post(
+            f"{self.settings.url}/api/v1/series/list?unpaged=true",
+            json=payload,
+            timeout=30,
+        )
+        response.raise_for_status()
+        data = response.json()
+        return data.get("content", data if isinstance(data, list) else [])
+
+    def find_series_for_book(self, book_title: str) -> dict | None:
+        library = self.find_library_for_book(book_title)
+        if not library:
+            return None
+        series_list = self.list_series_for_library(str(library["id"]))
+        if not series_list:
+            return None
+        if len(series_list) == 1:
+            return series_list[0]
+        sanitized = self.sanitize_name(book_title).lower()
+        for series in series_list:
+            if str(series.get("name") or "").lower() == sanitized:
+                return series
+            metadata = series.get("metadata") or {}
+            if str(metadata.get("title") or "").lower() == sanitized:
+                return series
+        return None
+
+    def update_series_metadata(self, series_id: str, payload: dict) -> None:
+        response = self.session.patch(
+            f"{self.settings.url}/api/v1/series/{series_id}/metadata",
+            json=payload,
+            timeout=30,
+        )
+        response.raise_for_status()
+
     def quick_scan_all(self) -> int:
         libraries = self.list_libraries()
         for library in libraries:
