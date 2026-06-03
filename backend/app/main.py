@@ -534,6 +534,17 @@ def enqueue_missing(_user: dict = Depends(authenticated_user)) -> dict:
     return {"enqueued": count}
 
 
+@app.post("/api/scan/reset-missing")
+def reset_missing(_user: dict = Depends(authenticated_user)) -> dict:
+    result = repository.reset_missing_chapters(conn)
+    repository.log(
+        conn,
+        "info",
+        f"Reset missing chapter state: {result['mangaReset']} titles, {result['chaptersReset']} chapters, {result['jobsRemoved']} old jobs removed",
+    )
+    return result
+
+
 @app.delete("/api/queue/queued")
 def delete_queued_downloads(_user: dict = Depends(authenticated_user)) -> dict:
     count = repository.delete_queued_downloads(conn)

@@ -91,7 +91,6 @@ The first page load asks you to register the single owner account. After that, r
 - Existing `.cbz` files are not overwritten.
 - Download workers, reader browser pages, and image workers can be changed from the UI. Keep browser pages low; 1-2 is the practical CPU-friendly range for Asura.
 - The downloader defaults to Playwright with a small browser-page pool. Selenium remains available as a fallback reader engine.
-- After the last queued download for a new book finishes, the backend creates/syncs the Komga library and triggers a quick `deep=false` scan.
-- After the last queued download for an existing book finishes, the backend triggers a quick `deep=false` Komga scan for that book's library.
+- When auto Komga import/scan is enabled, the backend waits until the full download queue is clear, imports all book folders, waits 1 hour, then triggers a quick `deep=false` scan for all Komga libraries.
 - The UI has manual quick scan buttons for a single book and for all Komga libraries. The all-library scan asks for confirmation first.
 - Asura changes its site often; parser or Cloudflare failures are stored in the backend logs/jobs instead of silently ignored.

@@ -87,7 +87,7 @@ class KomgaClient:
             self.quick_scan_library(str(library["id"]))
         return len(libraries)
 
-    def import_all_books(self, library_root) -> dict:
+    def import_all_books(self, library_root, scan: bool = True) -> dict:
         import time
         from pathlib import Path
         root = Path(library_root)
@@ -102,7 +102,8 @@ class KomgaClient:
                 library, created = self.ensure_library_for_book(folder.name)
                 if created:
                     time.sleep(2)
-                self.quick_scan_library(str(library["id"]))
+                if scan:
+                    self.quick_scan_library(str(library["id"]))
                 if created:
                     created_count += 1
                 scanned_count += 1

@@ -87,6 +87,18 @@ def active_download_job_count(conn: sqlite3.Connection) -> int:
     return int(row["count"] or 0)
 
 
+def unresolved_download_job_count(conn: sqlite3.Connection) -> int:
+    row = conn.execute(
+        """
+        SELECT COUNT(*) AS count
+        FROM jobs
+        WHERE type = 'download'
+          AND status IN ('queued', 'running', 'auto_paused', 'paused', 'failed')
+        """
+    ).fetchone()
+    return int(row["count"] or 0)
+
+
 def start_limited_scan_state(conn: sqlite3.Connection, active_threshold: int) -> bool:
     with DB_LOCK:
         try:
@@ -648,6 +660,48 @@ def enqueue_all_missing(conn: sqlite3.Connection) -> int:
         )
         conn.commit()
         return cursor.rowcount
+
+
+def reset_missing_chapters(conn: sqlite3.Connection) -> dict:
+    """Clear stale missing/download state so the next full scan recalculates it."""
+    with DB_LOCK:
+        removed = conn.execute(
+            """
+            DELETE FROM jobs
+            WHERE type = 'download'
+              AND status IN ('queued', 'paused', 'auto_paused', 'failed', 'done', 'skipped')
+            """
+        ).rowcount
+        chapters = conn.execute(
+            """
+            UPDATE chapters
+            SET is_downloaded = 0,
+                file_path = NULL,
+                updated_at = ?
+            WHERE is_downloaded != 0 OR file_path IS NOT NULL
+            """,
+            (utc_now(),),
+        ).rowcount
+        manga = conn.execute(
+            """
+            UPDATE manga
+            SET local_chapter_count = 0,
+                missing_count = 0,
+                local_folder = NULL,
+                last_scanned_at = NULL,
+                updated_at = ?
+            WHERE local_chapter_count != 0
+               OR missing_count != 0
+               OR local_folder IS NOT NULL
+               OR last_scanned_at IS NOT NULL
+            """,
+            (utc_now(),),
+        ).rowcount
+        _set_setting_uncommitted(conn, "limited_scan_active", "0")
+        _set_setting_uncommitted(conn, "limited_scan_batch_manga_ids", "[]")
+        _set_setting_uncommitted(conn, "limited_scan_batch_running", "0")
+        conn.commit()
+        return {"mangaReset": manga, "chaptersReset": chapters, "jobsRemoved": removed}
 
 
 def delete_queued_downloads(conn: sqlite3.Connection, zero_percent_only: bool = False) -> int:

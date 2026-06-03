@@ -58,6 +58,11 @@ export function DashboardPage({ summary, progress, debugThreads, loading, status
     await runAction("Re-enqueue missing", api.enqueueMissing);
   }
 
+  async function confirmResetMissing() {
+    if (!window.confirm("Reset missing chapter state and remove old queued/failed/done download jobs? Running downloads are left alone. Run a full scan after this to rebuild the missing list.")) return;
+    await runAction("Reset missing", api.resetMissing);
+  }
+
   // Overall progress totals
   const totalDone   = progress.reduce((s, p) => s + p.done, 0);
   const totalQueue  = progress.reduce((s, p) => s + p.queued + p.running, 0);
@@ -179,6 +184,14 @@ export function DashboardPage({ summary, progress, debugThreads, loading, status
             title="Enqueue all chapters already in the catalog that haven't been downloaded yet, without re-scraping Asura."
           >
             Re-enqueue missing ({summary.missingChapters.toLocaleString()})
+          </button>
+          <button
+            className="btn-ghost danger"
+            onClick={confirmResetMissing}
+            disabled={loading}
+            title="Clear stale missing/download state so the next full scan recalculates from your library."
+          >
+            Reset missing
           </button>
           <button
             className="btn-ghost"

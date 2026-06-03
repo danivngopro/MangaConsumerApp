@@ -66,7 +66,7 @@ export function SettingsPage({ summary, loading, runAction }: SharedProps) {
               />
               <span style={{ color: "var(--text-3)", fontSize: 13 }}>days</span>
               <span className="field-help" style={{ flexBasis: "100%" }}>
-                0 disables auto-scheduling
+                0 disables auto-scheduling. Enabled scans run at 2:00 AM.
               </span>
             </div>
 
@@ -140,7 +140,7 @@ export function SettingsPage({ summary, loading, runAction }: SharedProps) {
               />
               <label htmlFor="komga-auto">Auto Komga import/scan after downloads</label>
               <span className="field-help" style={{ flexBasis: "100%" }}>
-                Currently {summary.komgaAutoEnabled ? "enabled" : "disabled"}
+                Imports after the whole queue finishes, then waits 1 hour before a fast scan of all Komga libraries.
               </span>
             </div>
 

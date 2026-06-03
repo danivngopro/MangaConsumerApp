@@ -227,7 +227,10 @@ class ScanScheduler:
                 pass
             time.sleep(15)
 
-    def _is_due(self, interval_days: int) -> bool:
+    def _is_due(self, interval_days: int, now: datetime | None = None) -> bool:
+        now = now or datetime.now().astimezone()
+        if now.hour < 2:
+            return False
         last_value = repository.get_setting(self.conn, "last_full_scan_at", "")
         if not last_value:
             return True
@@ -235,7 +238,12 @@ class ScanScheduler:
             last = datetime.fromisoformat(last_value)
         except ValueError:
             return True
-        return datetime.now(timezone.utc) - last >= timedelta(days=interval_days)
+        if last.tzinfo is None:
+            last = last.replace(tzinfo=now.tzinfo)
+        else:
+            last = last.astimezone(now.tzinfo)
+        next_due_date = last.date() + timedelta(days=interval_days)
+        return now.date() >= next_due_date
 
     def _continue_limited_scan_if_ready(self) -> None:
         if repository.get_setting(self.conn, "limited_scan_active", "0") != "1":

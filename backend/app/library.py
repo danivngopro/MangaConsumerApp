@@ -12,6 +12,7 @@ CHAPTER_PATTERNS = [
     re.compile(r"(?:chapter|chap|ch)[\s._-]*(\d+(?:\.\d+)?)", re.IGNORECASE),
     re.compile(r"[\s._-](\d+(?:\.\d+)?)(?:\s*\[[^\]]+\])?\.cbz$", re.IGNORECASE),
 ]
+COMIC_EXTENSIONS = {".cbz", ".cbr", ".zip", ".rar", ".7z", ".epub"}
 
 
 def extract_chapter_key(filename: str) -> str:
@@ -30,27 +31,46 @@ def scan_library(conn: sqlite3.Connection, library_root: Path) -> dict:
     repository.clear_inventory(conn)
     book_count = 0
     chapter_count = 0
+    folders_seen = 0
+    comic_files_seen = 0
 
     for folder in sorted([item for item in library_root.iterdir() if item.is_dir()]):
-        cbz_files = list(folder.glob("*.cbz"))
-        if not cbz_files:
+        folders_seen += 1
+        comic_files = [
+            item
+            for item in folder.rglob("*")
+            if item.is_file() and item.suffix.lower() in COMIC_EXTENSIONS
+        ]
+        comic_files_seen += len(comic_files)
+        if not comic_files:
             continue
 
         chapters = []
-        for cbz in cbz_files:
-            key = extract_chapter_key(cbz.name)
+        for comic_file in comic_files:
+            key = extract_chapter_key(comic_file.name)
             if key:
                 chapters.append(key)
 
         if not chapters:
-            chapters = [str(index + 1) for index, _ in enumerate(cbz_files)]
+            chapters = [str(index + 1) for index, _ in enumerate(comic_files)]
 
         repository.upsert_inventory(conn, folder.name, str(folder), chapters)
         book_count += 1
         chapter_count += len(set(chapters))
 
-    repository.log(conn, "info", f"Indexed local library: {book_count} books, {chapter_count} chapters")
-    return {"books": book_count, "chapters": chapter_count, "error": None}
+    repository.log(
+        conn,
+        "info",
+        f"Indexed local library at {library_root}: {book_count}/{folders_seen} folders with comics, {chapter_count} chapters from {comic_files_seen} files",
+    )
+    return {
+        "books": book_count,
+        "chapters": chapter_count,
+        "error": None,
+        "root": str(library_root),
+        "foldersSeen": folders_seen,
+        "comicFilesSeen": comic_files_seen,
+    }
 
 
 def local_match_for_title(inventory: dict[str, dict], title: str) -> dict | None:

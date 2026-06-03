@@ -278,7 +278,14 @@ export const api = {
       { method: "POST" },
     ),
   libraryScan: () =>
-    request<{ books: number; chapters: number; error: string | null }>(
+    request<{
+      books: number;
+      chapters: number;
+      error: string | null;
+      root?: string;
+      foldersSeen?: number;
+      comicFilesSeen?: number;
+    }>(
       "/api/scan/library",
       { method: "POST" },
     ),
@@ -321,6 +328,11 @@ export const api = {
     request<{ queuePaused: boolean }>("/api/queue/resume", { method: "POST" }),
   enqueueMissing: () =>
     request<{ enqueued: number }>("/api/queue/enqueue-missing", { method: "POST" }),
+  resetMissing: () =>
+    request<{ mangaReset: number; chaptersReset: number; jobsRemoved: number }>(
+      "/api/scan/reset-missing",
+      { method: "POST" },
+    ),
   deleteQueuedDownloads: () =>
     request<{ removed: number }>("/api/queue/queued", { method: "DELETE" }),
   deleteZeroPercentQueuedDownloads: () =>

@@ -105,6 +105,21 @@ export function App() {
         typeof (result as { reason: string }).reason === "string"
       ) {
         setStatus(`${label}: ${(result as { reason: string }).reason}`);
+      } else if (
+        result &&
+        typeof result === "object" &&
+        "foldersSeen" in result &&
+        "comicFilesSeen" in result
+      ) {
+        const scan = result as {
+          books?: number;
+          chapters?: number;
+          foldersSeen?: number;
+          comicFilesSeen?: number;
+        };
+        setStatus(
+          `${label}: ${scan.books ?? 0}/${scan.foldersSeen ?? 0} folders, ${scan.chapters ?? 0} chapters from ${scan.comicFilesSeen ?? 0} files`,
+        );
       } else {
         setStatus(`${label} started`);
       }

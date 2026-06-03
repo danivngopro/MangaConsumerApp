@@ -7,7 +7,7 @@ from pathlib import Path
 
 from . import repository
 from .downloader import download_chapter
-from .komga import KomgaClient, run_post_download_komga_action
+from .komga import KomgaClient
 from .reader_extractor import ReaderExtractionPool
 
 
@@ -22,6 +22,7 @@ class DownloadQueue:
         browser_concurrency: int = 2,
         image_download_workers: int = 4,
         reader_engine: str = "playwright",
+        komga_post_download_delay_seconds: int = 3600,
     ) -> None:
         self.conn = conn
         self.library_root = library_root
@@ -37,6 +38,9 @@ class DownloadQueue:
         self._threads_lock = threading.Lock()
         self._worker_jobs: dict[int, dict] = {}
         self._reader_pool = ReaderExtractionPool(self._browser_concurrency, self._reader_engine)
+        self._komga_post_download_delay_seconds = max(0, int(komga_post_download_delay_seconds))
+        self._komga_batch_lock = threading.Lock()
+        self._komga_batch_thread: threading.Thread | None = None
 
     @property
     def paused(self) -> bool:
@@ -140,7 +144,6 @@ class DownloadQueue:
                     "chapter": chapter["label"],
                     "startedAt": time.time(),
                 }
-                existed_before_download = bool(manga.get("local_folder"))
                 repository.log(self.conn, "info", f"[{threading.current_thread().name}] Starting download: {manga['title']} — {chapter['label']}")
                 file_path = download_chapter(
                     self.conn,
@@ -156,13 +159,8 @@ class DownloadQueue:
                 repository.maybe_resume_auto_paused(self.conn)
                 repository.maybe_enqueue_next_pending_chapter(self.conn)
                 komga_auto_enabled = repository.get_setting(self.conn, "komga_auto_enabled", "0") == "1"
-                if komga_auto_enabled and not repository.has_pending_download_jobs_for_manga(self.conn, int(manga["id"])):
-                    run_post_download_komga_action(
-                        self.conn,
-                        self.komga_client,
-                        manga,
-                        existed_before_download,
-                    )
+                if komga_auto_enabled:
+                    self.schedule_post_queue_komga_batch_if_drained()
             except Exception as exc:
                 attempts = int(job["attempts"])
                 if attempts < 3:
@@ -173,6 +171,44 @@ class DownloadQueue:
                     repository.maybe_resume_auto_paused(self.conn)
             finally:
                 self._worker_jobs.pop(threading.get_ident(), None)
+
+    def schedule_post_queue_komga_batch_if_drained(self) -> bool:
+        if not self.komga_client.enabled:
+            return False
+        if repository.unresolved_download_job_count(self.conn) > 0:
+            return False
+        with self._komga_batch_lock:
+            if self._komga_batch_thread and self._komga_batch_thread.is_alive():
+                return False
+            self._komga_batch_thread = threading.Thread(
+                target=self.run_post_queue_komga_batch,
+                name="komga-post-queue-batch",
+                daemon=True,
+            )
+            self._komga_batch_thread.start()
+            return True
+
+    def run_post_queue_komga_batch(self) -> None:
+        if not self.komga_client.enabled:
+            return
+        try:
+            result = self.komga_client.import_all_books(self.library_root, scan=False)
+            repository.log(
+                self.conn,
+                "info",
+                f"Auto Komga import after queue drain: {result['created']} created, {result['scanned']} folders checked",
+            )
+            if self._komga_post_download_delay_seconds > 0:
+                repository.log(
+                    self.conn,
+                    "info",
+                    f"Waiting {self._komga_post_download_delay_seconds // 60} minutes before Komga quick scan all",
+                )
+                time.sleep(self._komga_post_download_delay_seconds)
+            count = self.komga_client.quick_scan_all()
+            repository.log(self.conn, "info", f"Auto Komga quick scan all complete with deep=false: {count}")
+        except Exception as exc:
+            repository.log(self.conn, "error", f"Auto Komga post-queue batch failed: {exc}")
 
     def _ensure_worker_count(self) -> None:
         with self._threads_lock:
