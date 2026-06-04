@@ -4,13 +4,15 @@ import sqlite3
 import threading
 
 from . import repository
+from .library import scan_library
 from .metadata_sync import sync_manga_metadata_to_komga
 
 
 _TASK_DEFS = [
     ("stop",     "Pause queue & clear pending jobs"),
     ("settings", "Apply recommended settings"),
-    ("scan",     "Scan local library + full Asura catalog"),
+    ("local",    "Scan local library"),
+    ("asura",    "Scan full Asura Scans catalog"),
     ("metadata", "Sync Asura metadata to Komga"),
     ("resume",   "Resume download queue"),
 ]
@@ -93,7 +95,7 @@ class SystemFlusher:
         scan_scheduler,
         scan_stop_event,
     ) -> None:
-        from .scanner import scan_full_catalog
+        from .scanner import scan_one_series
 
         # ── 1. Stop active work ───────────────────────────────────────────────
         self._set("stop", "running")
@@ -115,48 +117,90 @@ class SystemFlusher:
         self._set("settings", "running")
         try:
             for key, val in [
-                ("download_concurrency",  "5"),
-                ("browser_concurrency",   "3"),
-                ("image_download_workers","5"),
-                ("auto_scan_every_days",  "0"),
-                ("komga_auto_enabled",    "1"),
-                ("reorganize_on_drain",   "1"),
+                ("download_concurrency",   "5"),
+                ("browser_concurrency",    "3"),
+                ("image_download_workers", "5"),
+                ("auto_scan_every_days",   "0"),
+                ("komga_auto_enabled",     "1"),
+                ("reorganize_on_drain",    "1"),
             ]:
                 repository.set_setting(conn, key, val)
             download_queue.set_concurrency(5)
             download_queue.set_reader_options(3, 5, download_queue.reader_engine)
+            # Zero out all per-manga counts — the scan will recompute from the filesystem
+            conn.execute("UPDATE manga SET missing_count = 0, local_chapter_count = 0")
+            # Clear chapter-level download flags so find_missing_chapters uses only
+            # the real filesystem (local_keys) instead of stale DB state
+            conn.execute("UPDATE chapters SET is_downloaded = 0, file_path = NULL")
             # Clear stale metadata sync status so everything re-syncs fresh
             conn.execute("UPDATE manga SET metadata_synced_at = NULL, metadata_last_error = NULL")
             conn.commit()
-            self._set("settings", "done", "5 downloads · 3 browser pages · 5 image workers · metadata cleared")
+            self._set("settings", "done", "5 downloads · 3 browser pages · 5 image workers · counts reset")
         except Exception as exc:
             self._set("settings", "error", str(exc))
         if self._stop_requested:
             return self._cancel_remaining()
 
-        # ── 3. Full scan (local + Asura) ──────────────────────────────────────
-        self._set("scan", "running", "Scanning local library…")
+        # ── 3. Scan local library ─────────────────────────────────────────────
+        self._set("local", "running", "Indexing…")
+        inventory: dict = {}
         try:
-            scan_stop_event.clear()
-            result = scan_full_catalog(
-                conn,
-                asura_client,
-                settings.library_root,
-                should_stop=lambda: self._stop_requested,
+            result = scan_library(conn, settings.library_root)
+            inventory = repository.get_inventory_map(conn)
+            self._set(
+                "local", "done",
+                f"{result['books']} books · {result['chapters']} chapters found",
             )
-            if self._stop_requested:
-                self._set("scan", "error", f"Stopped — {result['seriesScanned']} series scanned before stop")
-            else:
-                self._set(
-                    "scan", "done",
-                    f"{result['seriesScanned']} series · {result['downloadsQueued']} chapters queued",
-                )
         except Exception as exc:
-            self._set("scan", "error", str(exc))
+            self._set("local", "error", str(exc))
         if self._stop_requested:
             return self._cancel_remaining()
 
-        # ── 4. Metadata sync ──────────────────────────────────────────────────
+        # ── 4. Full Asura catalog scan ────────────────────────────────────────
+        self._set("asura", "running", "Fetching catalog…")
+        scan_stop_event.clear()
+        series_scanned = 0
+        chapters_queued = 0
+        try:
+            series_list = asura_client.crawl_catalog(should_stop=lambda: self._stop_requested)
+            for series_hint in series_list:
+                if self._stop_requested:
+                    break
+                try:
+                    r = scan_one_series(
+                        conn,
+                        asura_client,
+                        series_hint,
+                        inventory,
+                        should_stop=lambda: self._stop_requested,
+                    )
+                    series_scanned += 1
+                    chapters_queued += int(r.get("enqueued", 0))
+                except Exception:
+                    series_scanned += 1  # count even on per-series error, keep going
+
+                # Update live progress after every series
+                self._set(
+                    "asura", "running",
+                    f"{series_scanned} series scanned · {chapters_queued} chapters queued",
+                )
+
+            if self._stop_requested:
+                self._set(
+                    "asura", "error",
+                    f"Stopped — {series_scanned} series · {chapters_queued} chapters queued",
+                )
+            else:
+                self._set(
+                    "asura", "done",
+                    f"{series_scanned} series · {chapters_queued} chapters queued",
+                )
+        except Exception as exc:
+            self._set("asura", "error", str(exc))
+        if self._stop_requested:
+            return self._cancel_remaining()
+
+        # ── 5. Metadata sync ──────────────────────────────────────────────────
         self._set("metadata", "running")
         if komga_client.enabled:
             try:
@@ -180,7 +224,7 @@ class SystemFlusher:
         if self._stop_requested:
             return self._cancel_remaining()
 
-        # ── 5. Resume ─────────────────────────────────────────────────────────
+        # ── 6. Resume ─────────────────────────────────────────────────────────
         self._set("resume", "running")
         try:
             download_queue.resume()
