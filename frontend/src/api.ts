@@ -280,6 +280,11 @@ export const api = {
       `/api/duplicates/${candidateId}/local`,
       { method: "DELETE" },
     ),
+  resolveGroupMain: (remoteMangaId: number, mainFolder: string) =>
+    request<{ confirmed: number; deleted: number; transferred: number; enqueued: number }>(
+      "/api/duplicates/group/resolve-main",
+      { method: "POST", body: JSON.stringify({ remote_manga_id: remoteMangaId, main_folder: mainFolder }) },
+    ),
   metadataCandidates: () => request<MetadataCandidate[]>("/api/metadata/candidates"),
   syncMetadata: (mangaIds?: number[]) =>
     request<{ synced: number; needsReview: number; errors: string[] }>(

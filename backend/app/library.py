@@ -101,6 +101,28 @@ def scan_library(conn: sqlite3.Connection, library_root: Path) -> dict:
     }
 
 
+def transfer_chapters(from_folder: Path, to_folder: Path) -> int:
+    """Copy chapter files from from_folder to to_folder that don't already exist there. Returns count copied."""
+    existing_keys: set[str] = set()
+    for f in to_folder.rglob("*"):
+        if f.is_file() and f.suffix.lower() in COMIC_EXTENSIONS:
+            key = extract_chapter_key(f.name)
+            if key:
+                existing_keys.add(key)
+
+    import shutil as _shutil
+
+    copied = 0
+    for f in sorted(from_folder.rglob("*")):
+        if f.is_file() and f.suffix.lower() in COMIC_EXTENSIONS:
+            key = extract_chapter_key(f.name)
+            if key and key not in existing_keys:
+                _shutil.copy2(f, to_folder / f.name)
+                existing_keys.add(key)
+                copied += 1
+    return copied
+
+
 def local_match_for_title(inventory: dict[str, dict], title: str) -> dict | None:
     normalized = normalize_title(title)
     if normalized in inventory:

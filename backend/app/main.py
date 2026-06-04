@@ -17,7 +17,7 @@ from .asura import AsuraClient
 from .config import load_settings
 from .database import connect, init_db
 from .komga import KomgaClient, KomgaSettings
-from .library import scan_library
+from .library import scan_library, transfer_chapters
 from .metadata_sync import sync_manga_metadata_to_komga
 from .queue import DownloadQueue
 from .scanner import scan_specific, scan_priority_books
@@ -39,6 +39,11 @@ class TopUpThresholdRequest(BaseModel):
 
 class DuplicateResolveRequest(BaseModel):
     status: str
+
+
+class DuplicateGroupResolveRequest(BaseModel):
+    remote_manga_id: int
+    main_folder: str
 
 
 class MetadataSyncRequest(BaseModel):
@@ -339,6 +344,103 @@ def delete_duplicate_local(candidate_id: int, _user: dict = Depends(authenticate
     except Exception as exc:
         repository.log(conn, "error", f"Duplicate local delete failed for {folder}: {exc}")
         raise HTTPException(status_code=502, detail=str(exc)) from exc
+
+
+@app.post("/api/duplicates/group/resolve-main")
+def resolve_duplicate_group(payload: DuplicateGroupResolveRequest, _user: dict = Depends(authenticated_user)) -> dict:
+    remote_manga_id = payload.remote_manga_id
+    main_folder_path = Path(payload.main_folder)
+    root = settings.library_root.resolve()
+    try:
+        target = main_folder_path.resolve()
+    except FileNotFoundError:
+        target = main_folder_path
+    if root not in target.parents and target != root:
+        raise HTTPException(status_code=400, detail="main folder is outside the configured library root")
+
+    candidates = conn.execute(
+        """
+        SELECT * FROM duplicate_candidates
+        WHERE candidate_kind = 'remote_local'
+          AND remote_manga_id = ?
+          AND status NOT IN ('ignored', 'confirmed_new')
+        """,
+        (remote_manga_id,),
+    ).fetchall()
+
+    main_candidate = next((c for c in candidates if c["local_folder"] == payload.main_folder), None)
+    if main_candidate is None:
+        raise HTTPException(status_code=404, detail="no matching candidate found for the given folder")
+
+    other_candidates = [c for c in candidates if c["local_folder"] != payload.main_folder]
+
+    transferred = 0
+    if other_candidates and main_folder_path.exists():
+        richest = max(other_candidates, key=lambda c: int(c["local_chapter_count"] or 0))
+        if int(richest["local_chapter_count"] or 0) > int(main_candidate["local_chapter_count"] or 0):
+            dup_path = Path(richest["local_folder"])
+            if dup_path.exists():
+                try:
+                    transferred = transfer_chapters(dup_path, main_folder_path)
+                except Exception as exc:
+                    repository.log(conn, "warning", f"Chapter transfer from {dup_path} failed: {exc}")
+
+    now = repository.utc_now()
+    deleted_folders: list[str] = []
+
+    for dup in other_candidates:
+        folder = Path(dup["local_folder"])
+        try:
+            komga_client.delete_library_for_book(dup["local_title"])
+        except Exception:
+            pass
+        try:
+            if folder.exists():
+                shutil.rmtree(folder)
+                deleted_folders.append(str(folder))
+        except Exception as exc:
+            repository.log(conn, "warning", f"Could not delete dup folder {folder}: {exc}")
+        conn.execute(
+            "UPDATE duplicate_candidates SET status = 'ignored', resolved_at = ?, updated_at = ? WHERE id = ?",
+            (now, now, dup["id"]),
+        )
+
+    conn.execute(
+        "UPDATE duplicate_candidates SET status = 'confirmed_exists', resolved_at = ?, updated_at = ? WHERE id = ?",
+        (now, now, main_candidate["id"]),
+    )
+    conn.execute(
+        """
+        UPDATE manga
+        SET download_folder_override = ?,
+            download_title_override = ?,
+            local_folder = ?,
+            updated_at = ?
+        WHERE id = ?
+        """,
+        (payload.main_folder, main_candidate["local_title"], payload.main_folder, now, remote_manga_id),
+    )
+    conn.commit()
+
+    enqueued = 0
+    try:
+        inventory = repository.get_inventory_map(conn)
+        local = inventory.get(normalize_title(main_candidate["local_title"]))
+        local_keys: set[str] = local["chapters"] if local else set()
+        missing = repository.find_missing_chapters(conn, remote_manga_id, local_keys)
+        for chapter in missing:
+            repository.enqueue_download(conn, remote_manga_id, int(chapter["id"]))
+            enqueued += 1
+    except Exception as exc:
+        repository.log(conn, "warning", f"Could not enqueue missing chapters for manga {remote_manga_id}: {exc}")
+
+    repository.log(
+        conn,
+        "info",
+        f"Duplicate group resolved: manga {remote_manga_id}, main={payload.main_folder}, "
+        f"deleted {len(deleted_folders)} folders, transferred {transferred} chapters, enqueued {enqueued}",
+    )
+    return {"confirmed": 1, "deleted": len(deleted_folders), "transferred": transferred, "enqueued": enqueued}
 
 
 @app.get("/api/debug/threads")
