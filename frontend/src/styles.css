@@ -773,8 +773,10 @@ input:focus, select:focus, textarea:focus {
 
 /* Local library browse */
 .browse-page {
-  width: min(100%, 1320px);
-  margin: 0 auto;
+  width: 100%;
+  max-width: 1320px;
+  margin: 0;
+  overflow-x: hidden;
 }
 
 .browse-head { margin-bottom: 14px; }
@@ -789,6 +791,7 @@ input:focus, select:focus, textarea:focus {
   border-radius: var(--r-lg);
   background: var(--bg-card);
   border: 1px solid var(--border);
+  max-width: 100%;
 }
 
 .library-search {
@@ -817,6 +820,7 @@ input:focus, select:focus, textarea:focus {
   display: flex;
   gap: 6px;
   overflow-x: auto;
+  max-width: 100%;
   padding: 2px 0 12px;
   margin-bottom: 2px;
 }
@@ -831,12 +835,14 @@ input:focus, select:focus, textarea:focus {
   margin-bottom: 12px;
   color: var(--text-2);
   font-size: 13px;
+  max-width: 100%;
 }
 
 .library-grid {
   display: grid;
   grid-template-columns: repeat(auto-fill, minmax(250px, 1fr));
   gap: 10px;
+  max-width: 100%;
 }
 
 .library-book {
@@ -1191,6 +1197,16 @@ input:focus, select:focus, textarea:focus {
   .browse-modal { width: min(820px, calc(100vw - 28px)); }
   .browse-modal-grid { grid-template-columns: 140px minmax(0,1fr); }
   .browse-modal-stats { grid-column: 1 / -1; grid-template-columns: repeat(4, minmax(0,1fr)); }
+}
+
+@media (max-width: 1380px) {
+  .library-filter-panel {
+    grid-template-columns: minmax(240px,1fr) repeat(3, minmax(90px,0.5fr)) auto;
+  }
+
+  .library-filter-panel input[type="number"] {
+    min-width: 0;
+  }
 }
 
 @media (max-width: 640px) {
