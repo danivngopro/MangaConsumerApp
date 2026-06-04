@@ -13,6 +13,16 @@ type RemoteGroup = {
   candidates: DuplicateCandidate[];
 };
 
+type RemoteChoice =
+  | { kind: "main"; folder: string }
+  | { kind: "existing"; candidateId: number }
+  | { kind: "new" }
+  | { kind: "ignore" };
+
+type LocalChoice =
+  | { kind: "main"; folder: string }
+  | { kind: "ignore" };
+
 function groupRemoteCandidates(items: DuplicateCandidate[]): {
   remoteGroups: RemoteGroup[];
   localDups: DuplicateCandidate[];
@@ -38,10 +48,7 @@ function groupRemoteCandidates(items: DuplicateCandidate[]): {
     }
   }
 
-  return {
-    remoteGroups: Array.from(groupMap.values()),
-    localDups,
-  };
+  return { remoteGroups: Array.from(groupMap.values()), localDups };
 }
 
 function dominantStatus(candidates: DuplicateCandidate[]): DuplicateCandidate["status"] {
@@ -54,6 +61,9 @@ function dominantStatus(candidates: DuplicateCandidate[]): DuplicateCandidate["s
 export function DuplicatesPage({ loading, runAction }: SharedProps) {
   const [items, setItems] = useState<DuplicateCandidate[]>([]);
   const [statusFilter, setStatusFilter] = useState<StatusFilter>("pending");
+  const [remoteChoices, setRemoteChoices] = useState<Record<number, RemoteChoice>>({});
+  const [localChoices, setLocalChoices] = useState<Record<number, LocalChoice>>({});
+  const [bulkProgress, setBulkProgress] = useState<{ current: number; total: number } | null>(null);
 
   async function refreshDuplicates() {
     setItems(await api.duplicates());
@@ -68,56 +78,83 @@ export function DuplicatesPage({ loading, runAction }: SharedProps) {
     refreshDuplicates().catch(() => {});
   }, []);
 
-  async function resolveOne(candidate: DuplicateCandidate, status: "confirmed_exists" | "confirmed_new" | "ignored") {
-    const label =
-      status === "confirmed_exists"
-        ? `Use local folder for ${candidate.remote_title}`
-        : status === "confirmed_new"
-        ? `Download as new: ${candidate.remote_title}`
-        : `Ignore duplicate: ${candidate.remote_title}`;
-    await runAction(label, () => api.resolveDuplicate(candidate.id, status));
-    await refreshDuplicates();
+  function stageRemoteChoice(groupId: number, choice: RemoteChoice | null) {
+    setRemoteChoices((current) => {
+      const next = { ...current };
+      if (choice) next[groupId] = choice;
+      else delete next[groupId];
+      return next;
+    });
   }
 
-  async function resolveGroupAll(group: RemoteGroup, status: "confirmed_new" | "ignored") {
-    for (const c of group.candidates) {
-      await api.resolveDuplicate(c.id, status);
-    }
-    await refreshDuplicates();
-  }
-
-  async function resolveGroupMain(group: RemoteGroup, mainFolder: string) {
-    const label = `Set main book for: ${group.remote_title}`;
-    await runAction(label, () => api.resolveGroupMain(group.remote_manga_id, mainFolder));
-    await refreshDuplicates();
-  }
-
-  async function resolveLocalDup(candidate: DuplicateCandidate, status: "ignored") {
-    await runAction(`Ignore local duplicate: ${candidate.local_title}`, () =>
-      api.resolveDuplicate(candidate.id, status),
-    );
-    await refreshDuplicates();
-  }
-
-  async function resolveLocalMain(candidate: DuplicateCandidate, mainFolder: string) {
-    await runAction(`Set main book for local duplicate: ${candidate.remote_title}`, () =>
-      api.resolveLocalMain(candidate.id, mainFolder),
-    );
-    await refreshDuplicates();
+  function stageLocalChoice(candidateId: number, choice: LocalChoice | null) {
+    setLocalChoices((current) => {
+      const next = { ...current };
+      if (choice) next[candidateId] = choice;
+      else delete next[candidateId];
+      return next;
+    });
   }
 
   const { remoteGroups, localDups } = groupRemoteCandidates(items);
 
+  async function saveSelectedChoices() {
+    const stagedRemote = remoteGroups
+      .map((group) => ({ group, choice: remoteChoices[group.remote_manga_id] }))
+      .filter((item): item is { group: RemoteGroup; choice: RemoteChoice } => Boolean(item.choice));
+    const stagedLocal = localDups
+      .map((candidate) => ({ candidate, choice: localChoices[candidate.id] }))
+      .filter((item): item is { candidate: DuplicateCandidate; choice: LocalChoice } => Boolean(item.choice));
+    const total = stagedRemote.length + stagedLocal.length;
+    if (total === 0) return;
+
+    setBulkProgress({ current: 0, total });
+    await runAction("Save duplicate choices", async () => {
+      let done = 0;
+      for (const { group, choice } of stagedRemote) {
+        if (choice.kind === "main") {
+          await api.resolveGroupMain(group.remote_manga_id, choice.folder);
+        } else if (choice.kind === "existing") {
+          await api.resolveDuplicate(choice.candidateId, "confirmed_exists");
+        } else {
+          const status = choice.kind === "new" ? "confirmed_new" : "ignored";
+          for (const candidate of group.candidates) {
+            await api.resolveDuplicate(candidate.id, status);
+          }
+        }
+        done += 1;
+        setBulkProgress({ current: done, total });
+      }
+
+      for (const { candidate, choice } of stagedLocal) {
+        if (choice.kind === "main") {
+          await api.resolveLocalMain(candidate.id, choice.folder);
+        } else {
+          await api.resolveDuplicate(candidate.id, "ignored");
+        }
+        done += 1;
+        setBulkProgress({ current: done, total });
+      }
+      return { saved: total };
+    });
+
+    setRemoteChoices({});
+    setLocalChoices({});
+    setBulkProgress(null);
+    await refreshDuplicates();
+  }
+
   const filteredGroups = remoteGroups.filter(
-    (g) => statusFilter === "all" || dominantStatus(g.candidates) === statusFilter,
+    (group) => statusFilter === "all" || dominantStatus(group.candidates) === statusFilter,
   );
   const filteredLocalDups = localDups.filter(
     (item) => statusFilter === "all" || item.status === statusFilter,
   );
 
-  const pending = remoteGroups.filter((g) => dominantStatus(g.candidates) === "pending").length
-    + localDups.filter((d) => d.status === "pending").length;
-  const confirmed = remoteGroups.filter((g) => dominantStatus(g.candidates) === "confirmed_exists").length;
+  const pending = remoteGroups.filter((group) => dominantStatus(group.candidates) === "pending").length
+    + localDups.filter((item) => item.status === "pending").length;
+  const confirmed = remoteGroups.filter((group) => dominantStatus(group.candidates) === "confirmed_exists").length;
+  const stagedCount = Object.keys(remoteChoices).length + Object.keys(localChoices).length;
 
   return (
     <>
@@ -127,6 +164,9 @@ export function DuplicatesPage({ loading, runAction }: SharedProps) {
           {pending > 0 && <span className="tag tag-yellow">{pending} pending</span>}
         </div>
         <div className="page-actions">
+          <button className="btn-primary btn-sm" onClick={saveSelectedChoices} disabled={loading || stagedCount === 0}>
+            <Check size={13} /> Save selected ({stagedCount})
+          </button>
           <button className="btn-primary btn-sm" onClick={scanLocalDuplicates} disabled={loading}>
             <Search size={13} /> Scan local duplicates
           </button>
@@ -139,8 +179,24 @@ export function DuplicatesPage({ loading, runAction }: SharedProps) {
       <div className="metrics-grid" style={{ marginBottom: 14 }}>
         <StatCard label="Pending" value={`${pending}`} />
         <StatCard label="Main set" value={`${confirmed}`} />
+        <StatCard label="Staged choices" value={`${stagedCount}`} />
         <StatCard label="Total groups" value={`${remoteGroups.length + localDups.length}`} />
       </div>
+
+      {bulkProgress && (
+        <div className="metadata-sync-progress">
+          <div className="total-bar-header">
+            <span className="total-bar-label">Saving duplicate choices</span>
+            <span className="total-bar-pct">{bulkProgress.current} / {bulkProgress.total}</span>
+          </div>
+          <div className="track">
+            <div
+              className="track-fill"
+              style={{ width: `${bulkProgress.total ? (bulkProgress.current / bulkProgress.total) * 100 : 0}%` }}
+            />
+          </div>
+        </div>
+      )}
 
       <div className="card" style={{ marginBottom: 14 }}>
         <div className="filter-row">
@@ -162,10 +218,8 @@ export function DuplicatesPage({ loading, runAction }: SharedProps) {
             key={group.remote_manga_id}
             group={group}
             loading={loading}
-            onSetMain={(folder) => resolveGroupMain(group, folder)}
-            onDownloadNew={() => resolveGroupAll(group, "confirmed_new")}
-            onIgnoreAll={() => resolveGroupAll(group, "ignored")}
-            onUseExisting={(candidate) => resolveOne(candidate, "confirmed_exists")}
+            choice={remoteChoices[group.remote_manga_id] ?? null}
+            onStageChoice={(choice) => stageRemoteChoice(group.remote_manga_id, choice)}
           />
         ))}
 
@@ -174,8 +228,8 @@ export function DuplicatesPage({ loading, runAction }: SharedProps) {
             key={item.id}
             item={item}
             loading={loading}
-            onSetMain={(folder) => resolveLocalMain(item, folder)}
-            onIgnore={() => resolveLocalDup(item, "ignored")}
+            choice={localChoices[item.id] ?? null}
+            onStageChoice={(choice) => stageLocalChoice(item.id, choice)}
           />
         ))}
 
@@ -194,24 +248,21 @@ export function DuplicatesPage({ loading, runAction }: SharedProps) {
 function RemoteGroupCard({
   group,
   loading,
-  onSetMain,
-  onDownloadNew,
-  onIgnoreAll,
-  onUseExisting,
+  choice,
+  onStageChoice,
 }: {
   group: RemoteGroup;
   loading: boolean;
-  onSetMain: (folder: string) => void;
-  onDownloadNew: () => void;
-  onIgnoreAll: () => void;
-  onUseExisting: (candidate: DuplicateCandidate) => void;
+  choice: RemoteChoice | null;
+  onStageChoice: (choice: RemoteChoice | null) => void;
 }) {
   const [selectedFolder, setSelectedFolder] = useState<string | null>(null);
   const status = dominantStatus(group.candidates);
   const isMulti = group.candidates.length > 1;
-
-  const mainCandidate = group.candidates.find((c) => c.status === "confirmed_exists");
-  const effectiveSelected = selectedFolder ?? mainCandidate?.local_folder ?? null;
+  const mainCandidate = group.candidates.find((candidate) => candidate.status === "confirmed_exists");
+  const stagedMain = choice?.kind === "main" ? choice.folder : null;
+  const effectiveSelected = stagedMain ?? selectedFolder ?? mainCandidate?.local_folder ?? null;
+  const stagedLabel = choice ? choice.kind.replace("existing", "use existing") + " staged" : "";
 
   return (
     <div className={`download-item ${status === "pending" ? "active" : ""}`}>
@@ -222,6 +273,7 @@ function RemoteGroupCard({
           <span className={`tag ${status === "pending" ? "tag-yellow" : "tag-purple"}`}>
             {status.replace(/_/g, " ")}
           </span>
+          {choice && <span className="tag tag-purple">{stagedLabel}</span>}
         </div>
         <div className="download-meta">
           <span>{group.remote_chapter_count} remote chapters</span>
@@ -229,12 +281,13 @@ function RemoteGroupCard({
         </div>
 
         <div style={{ marginTop: 10, display: "flex", flexDirection: "column", gap: 6 }}>
-          {group.candidates.map((c) => {
-            const isSelected = effectiveSelected === c.local_folder;
-            const isMain = c.status === "confirmed_exists";
+          {group.candidates.map((candidate) => {
+            const isSelected =
+              effectiveSelected === candidate.local_folder ||
+              (choice?.kind === "existing" && choice.candidateId === candidate.id);
             return (
               <label
-                key={c.id}
+                key={candidate.id}
                 style={{
                   display: "flex",
                   alignItems: "flex-start",
@@ -246,7 +299,11 @@ function RemoteGroupCard({
                   cursor: status === "pending" ? "pointer" : "default",
                 }}
                 onClick={() => {
-                  if (status === "pending") setSelectedFolder(c.local_folder);
+                  if (status !== "pending") return;
+                  setSelectedFolder(candidate.local_folder);
+                  onStageChoice(isMulti
+                    ? { kind: "main", folder: candidate.local_folder }
+                    : { kind: "existing", candidateId: candidate.id });
                 }}
               >
                 {status === "pending" && (
@@ -254,20 +311,27 @@ function RemoteGroupCard({
                     type="radio"
                     name={`group-${group.remote_manga_id}`}
                     checked={isSelected}
-                    onChange={() => setSelectedFolder(c.local_folder)}
+                    onChange={() => {
+                      setSelectedFolder(candidate.local_folder);
+                      onStageChoice(isMulti
+                        ? { kind: "main", folder: candidate.local_folder }
+                        : { kind: "existing", candidateId: candidate.id });
+                    }}
                     style={{ marginTop: 2, flexShrink: 0 }}
                   />
                 )}
-                {isMain && <Star size={14} style={{ color: "var(--accent)", flexShrink: 0, marginTop: 2 }} />}
+                {candidate.status === "confirmed_exists" && (
+                  <Star size={14} style={{ color: "var(--accent)", flexShrink: 0, marginTop: 2 }} />
+                )}
                 <div style={{ minWidth: 0 }}>
-                  <div style={{ fontWeight: 500 }}>{c.local_title}</div>
+                  <div style={{ fontWeight: 500 }}>{candidate.local_title}</div>
                   <div className="muted" style={{ marginTop: 2 }}>
-                    {c.local_chapter_count} local chapters &middot; {Math.round(Number(c.score) * 100)}% match
+                    {candidate.local_chapter_count} local chapters &middot; {Math.round(Number(candidate.score) * 100)}% match
                   </div>
-                  <div className="muted" style={{ overflowWrap: "anywhere", marginTop: 2 }}>{c.local_folder}</div>
-                  {c.local_chapter_count < group.remote_chapter_count && (
+                  <div className="muted" style={{ overflowWrap: "anywhere", marginTop: 2 }}>{candidate.local_folder}</div>
+                  {candidate.local_chapter_count < group.remote_chapter_count && (
                     <div className="muted" style={{ marginTop: 2 }}>
-                      {group.remote_chapter_count - c.local_chapter_count} chapters missing
+                      {group.remote_chapter_count - candidate.local_chapter_count} chapters missing
                     </div>
                   )}
                 </div>
@@ -275,52 +339,33 @@ function RemoteGroupCard({
             );
           })}
         </div>
-
-        {isMulti && status === "pending" && effectiveSelected && (
-          <div className="muted" style={{ marginTop: 8, fontSize: "0.82em" }}>
-            {(() => {
-              const main = group.candidates.find((c) => c.local_folder === effectiveSelected);
-              const richest = group.candidates
-                .filter((c) => c.local_folder !== effectiveSelected)
-                .sort((a, b) => b.local_chapter_count - a.local_chapter_count)[0];
-              if (main && richest && richest.local_chapter_count > main.local_chapter_count) {
-                return `${richest.local_chapter_count - main.local_chapter_count} chapters will be transferred from "${richest.local_title}" to the main book before deleting.`;
-              }
-              return null;
-            })()}
-          </div>
-        )}
       </div>
 
       <div className="modal-actions" style={{ justifyContent: "flex-end" }}>
         {status === "pending" && (
           <>
-            {isMulti ? (
-              <button
-                className="btn-primary btn-sm"
-                onClick={() => effectiveSelected && onSetMain(effectiveSelected)}
-                disabled={loading || !effectiveSelected}
-              >
-                <Check size={12} /> Set as main
-              </button>
-            ) : (
-              <button
-                className="btn-primary btn-sm"
-                onClick={() => {
-                  const only = group.candidates[0];
-                  if (only) onUseExisting(only);
-                }}
-                disabled={loading}
-              >
-                <Check size={12} /> Use this
+            <button
+              className="btn-primary btn-sm"
+              onClick={() => {
+                const only = group.candidates[0];
+                if (isMulti && effectiveSelected) onStageChoice({ kind: "main", folder: effectiveSelected });
+                if (!isMulti && only) onStageChoice({ kind: "existing", candidateId: only.id });
+              }}
+              disabled={loading || (isMulti && !effectiveSelected)}
+            >
+              <Check size={12} /> {isMulti ? "Stage main" : "Stage use"}
+            </button>
+            <button className="btn-ghost btn-sm" onClick={() => onStageChoice({ kind: "new" })} disabled={loading}>
+              <X size={12} /> Stage new
+            </button>
+            <button className="btn-ghost btn-sm" onClick={() => onStageChoice({ kind: "ignore" })} disabled={loading}>
+              Stage ignore
+            </button>
+            {choice && (
+              <button className="btn-ghost btn-sm" onClick={() => onStageChoice(null)} disabled={loading}>
+                Clear
               </button>
             )}
-            <button className="btn-ghost btn-sm" onClick={onDownloadNew} disabled={loading}>
-              <X size={12} /> Download new
-            </button>
-            <button className="btn-ghost btn-sm" onClick={onIgnoreAll} disabled={loading}>
-              Ignore
-            </button>
           </>
         )}
       </div>
@@ -331,36 +376,23 @@ function RemoteGroupCard({
 function LocalDupRow({
   item,
   loading,
-  onSetMain,
-  onIgnore,
+  choice,
+  onStageChoice,
 }: {
   item: DuplicateCandidate;
   loading: boolean;
-  onSetMain: (folder: string) => void;
-  onIgnore: () => void;
+  choice: LocalChoice | null;
+  onStageChoice: (choice: LocalChoice | null) => void;
 }) {
   const [selectedFolder, setSelectedFolder] = useState<string | null>(null);
   const score = Math.round(Number(item.score || 0) * 100);
-
-  // The two candidates: "keep" (remote_title/remote_folder) and "delete" (local_title/local_folder)
-  // remote_folder may be null for candidates created before the migration — show a fallback label
   const books = [
-    {
-      title: item.remote_title,
-      folder: item.remote_folder,
-      chapters: item.remote_chapter_count,
-      folderMissing: item.remote_folder == null,
-    },
-    {
-      title: item.local_title,
-      folder: item.local_folder,
-      chapters: item.local_chapter_count,
-      folderMissing: false,
-    },
+    { title: item.remote_title, folder: item.remote_folder, chapters: item.remote_chapter_count, folderMissing: item.remote_folder == null },
+    { title: item.local_title, folder: item.local_folder, chapters: item.local_chapter_count, folderMissing: false },
   ];
-
-  const effectiveSelected = selectedFolder ?? (item.remote_folder ?? item.local_folder);
-  const canResolve = item.remote_folder != null; // can only pick main if we have both folders
+  const stagedMain = choice?.kind === "main" ? choice.folder : null;
+  const effectiveSelected = stagedMain ?? selectedFolder ?? (item.remote_folder ?? item.local_folder);
+  const canResolve = item.remote_folder != null;
 
   return (
     <div className={`download-item ${item.status === "pending" ? "active" : ""}`}>
@@ -371,21 +403,22 @@ function LocalDupRow({
           <span className={`tag ${item.status === "pending" ? "tag-yellow" : "tag-purple"}`}>
             {item.status.replace(/_/g, " ")}
           </span>
+          {choice && <span className="tag tag-purple">{choice.kind} staged</span>}
           <span className="muted" style={{ fontSize: "0.82em" }}>{score}% match</span>
         </div>
 
         <div style={{ marginTop: 10, display: "flex", flexDirection: "column", gap: 6 }}>
           {item.remote_folder == null && item.status === "pending" && (
-          <div className="muted" style={{ marginTop: 6, fontSize: "0.82em" }}>
-            Run "Scan local duplicates" to load both folder paths and enable picking a main book.
-          </div>
-        )}
-        {books.map((book) => {
+            <div className="muted" style={{ marginTop: 6, fontSize: "0.82em" }}>
+              Run "Scan local duplicates" to load both folder paths and enable picking a main book.
+            </div>
+          )}
+          {books.map((book) => {
             const bookFolder = book.folder ?? `__missing__${book.title}`;
             const isSelected = effectiveSelected === bookFolder || effectiveSelected === book.folder;
             return (
               <label
-                key={book.folder}
+                key={bookFolder}
                 style={{
                   display: "flex",
                   alignItems: "flex-start",
@@ -396,14 +429,24 @@ function LocalDupRow({
                   background: isSelected ? "var(--accent-dim, rgba(139,92,246,0.08))" : "transparent",
                   cursor: item.status === "pending" ? "pointer" : "default",
                 }}
-                onClick={() => { if (item.status === "pending" && book.folder) setSelectedFolder(book.folder); }}
+                onClick={() => {
+                  if (item.status === "pending" && book.folder) {
+                    setSelectedFolder(book.folder);
+                    onStageChoice({ kind: "main", folder: book.folder });
+                  }
+                }}
               >
                 {item.status === "pending" && (
                   <input
                     type="radio"
                     name={`local-dup-${item.id}`}
                     checked={isSelected}
-                    onChange={() => book.folder && setSelectedFolder(book.folder)}
+                    onChange={() => {
+                      if (book.folder) {
+                        setSelectedFolder(book.folder);
+                        onStageChoice({ kind: "main", folder: book.folder });
+                      }
+                    }}
                     disabled={book.folderMissing}
                     style={{ marginTop: 2, flexShrink: 0 }}
                   />
@@ -412,7 +455,7 @@ function LocalDupRow({
                   <div style={{ fontWeight: 500 }}>{book.title}</div>
                   <div className="muted" style={{ marginTop: 2 }}>{book.chapters} chapters</div>
                   <div className="muted" style={{ overflowWrap: "anywhere", marginTop: 2 }}>
-                    {book.folderMissing ? <em>folder path unknown — re-scan to load</em> : book.folder}
+                    {book.folderMissing ? <em>folder path unknown - re-scan to load</em> : book.folder}
                   </div>
                 </div>
               </label>
@@ -420,41 +463,27 @@ function LocalDupRow({
           })}
         </div>
 
-        {item.status === "pending" && canResolve && effectiveSelected && (() => {
-          const other = books.find((b) => b.folder !== effectiveSelected);
-          const main = books.find((b) => b.folder === effectiveSelected);
-          if (other && main && other.chapters > main.chapters) {
-            return (
-              <div className="muted" style={{ marginTop: 8, fontSize: "0.82em" }}>
-                {other.chapters - main.chapters} chapters will be transferred from "{other.title}" before deleting.
-              </div>
-            );
-          }
-          return null;
-        })()}
-
         <div className="muted" style={{ marginTop: 6 }}>{item.reason}</div>
       </div>
 
       <div className="modal-actions" style={{ justifyContent: "flex-end" }}>
         {item.status === "pending" && (
           <>
-            {canResolve ? (
-              <button
-                className="btn-primary btn-sm"
-                onClick={() => effectiveSelected && onSetMain(effectiveSelected)}
-                disabled={loading || !effectiveSelected}
-              >
-                <Check size={12} /> Set as main
-              </button>
-            ) : (
-              <button className="btn-primary btn-sm" onClick={() => onSetMain(item.local_folder)} disabled={loading}>
-                <Check size={12} /> Keep this
+            <button
+              className="btn-primary btn-sm"
+              onClick={() => effectiveSelected && onStageChoice({ kind: "main", folder: effectiveSelected })}
+              disabled={loading || !effectiveSelected || (!canResolve && !item.local_folder)}
+            >
+              <Check size={12} /> {canResolve ? "Stage main" : "Stage keep"}
+            </button>
+            <button className="btn-ghost btn-sm" onClick={() => onStageChoice({ kind: "ignore" })} disabled={loading}>
+              Stage ignore
+            </button>
+            {choice && (
+              <button className="btn-ghost btn-sm" onClick={() => onStageChoice(null)} disabled={loading}>
+                Clear
               </button>
             )}
-            <button className="btn-ghost btn-sm" onClick={onIgnore} disabled={loading}>
-              Ignore
-            </button>
           </>
         )}
       </div>
