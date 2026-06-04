@@ -1,8 +1,152 @@
 import { FormEvent, useEffect, useState } from "react";
-import { FolderSync, Wrench, Square } from "lucide-react";
-import { api } from "../api";
+import { FolderSync, Wrench, Square, Zap, CheckCircle2, XCircle, Loader, Clock, Ban } from "lucide-react";
+import { api, FlushTask } from "../api";
 import { StatCard } from "../components/shared";
 import type { SharedProps } from "../App";
+
+function TaskIcon({ status }: { status: FlushTask["status"] }) {
+  if (status === "running")   return <Loader size={15} style={{ animation: "spin 1s linear infinite" }} />;
+  if (status === "done")      return <CheckCircle2 size={15} style={{ color: "var(--accent)" }} />;
+  if (status === "error")     return <XCircle size={15} style={{ color: "var(--red, #ef4444)" }} />;
+  if (status === "cancelled") return <Ban size={15} style={{ color: "var(--text-3)" }} />;
+  return <Clock size={15} style={{ color: "var(--text-3)" }} />;
+}
+
+function TaskBar({ status }: { status: FlushTask["status"] }) {
+  const color =
+    status === "done"      ? "var(--accent)"              :
+    status === "error"     ? "var(--red, #ef4444)"        :
+    status === "running"   ? "var(--accent)"              :
+    status === "cancelled" ? "var(--border)"              :
+                             "var(--border)";
+  const width =
+    status === "done"    ? "100%" :
+    status === "error"   ? "100%" :
+    status === "pending" ? "0%"   :
+    status === "cancelled" ? "0%" :
+    "40%"; // running: partial fill
+  return (
+    <div style={{ height: 3, background: "var(--border)", borderRadius: 2, marginTop: 4, overflow: "hidden" }}>
+      <div style={{
+        height: "100%", width, background: color, borderRadius: 2,
+        transition: "width 0.4s ease",
+        animation: status === "running" ? "pulse-bar 1.4s ease-in-out infinite" : undefined,
+      }} />
+    </div>
+  );
+}
+
+function FlushCard({ flushRunning, loading }: { flushRunning: boolean; loading: boolean }) {
+  const [tasks, setTasks] = useState<FlushTask[]>([]);
+  const [everStarted, setEverStarted] = useState(false);
+
+  useEffect(() => {
+    if (!flushRunning) return;
+    const interval = setInterval(async () => {
+      try {
+        const status = await api.systemFlushStatus();
+        setTasks(status.tasks);
+        if (!status.running) clearInterval(interval);
+      } catch {
+        clearInterval(interval);
+      }
+    }, 1500);
+    return () => clearInterval(interval);
+  }, [flushRunning]);
+
+  async function startFlush() {
+    setEverStarted(true);
+    setTasks([]);
+    try {
+      await api.systemFlush();
+      const status = await api.systemFlushStatus();
+      setTasks(status.tasks);
+    } catch (e) {
+      console.error(e);
+    }
+  }
+
+  async function stopFlush() {
+    await api.systemFlushStop();
+  }
+
+  const done    = tasks.filter((t) => t.status === "done").length;
+  const total   = tasks.length;
+  const hasError = tasks.some((t) => t.status === "error");
+
+  return (
+    <div className="card" style={{ marginTop: 16 }}>
+      <div className="card-title" style={{ display: "flex", alignItems: "center", gap: 8 }}>
+        <Zap size={16} style={{ color: "var(--accent)" }} />
+        System Flush
+      </div>
+
+      <p style={{ color: "var(--text-2)", marginBottom: 14, lineHeight: 1.5 }}>
+        Full automated reset: pauses downloads, clears the queue, reindexes your local library,
+        runs a complete Asura Scans catalog scan, queues every missing chapter, and syncs all
+        metadata to Komga. Also sets 5 concurrent downloads · 3 browser pages · 5 image workers
+        · auto Komga import &amp; reorganize enabled.
+      </p>
+
+      {everStarted && tasks.length > 0 && (
+        <div style={{ display: "flex", flexDirection: "column", gap: 10, marginBottom: 16 }}>
+          {/* Overall bar */}
+          <div style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 4 }}>
+            <div style={{ flex: 1, height: 6, background: "var(--border)", borderRadius: 3, overflow: "hidden" }}>
+              <div style={{
+                height: "100%",
+                width: total ? `${(done / total) * 100}%` : "0%",
+                background: hasError ? "var(--red, #ef4444)" : "var(--accent)",
+                borderRadius: 3,
+                transition: "width 0.4s ease",
+              }} />
+            </div>
+            <span style={{ fontSize: 12, color: "var(--text-3)", whiteSpace: "nowrap" }}>{done}/{total}</span>
+          </div>
+
+          {tasks.map((task) => (
+            <div key={task.id}>
+              <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+                <TaskIcon status={task.status} />
+                <span style={{ fontWeight: 500, flex: 1 }}>{task.label}</span>
+                {task.detail && (
+                  <span style={{ fontSize: 12, color: "var(--text-3)" }}>{task.detail}</span>
+                )}
+              </div>
+              <TaskBar status={task.status} />
+            </div>
+          ))}
+        </div>
+      )}
+
+      <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
+        {flushRunning ? (
+          <button
+            className="btn-ghost btn-sm danger"
+            onClick={stopFlush}
+            disabled={loading}
+          >
+            <Square size={13} /> Stop flush
+          </button>
+        ) : (
+          <button
+            className="btn-primary"
+            style={{ height: 40, paddingInline: 20, display: "flex", alignItems: "center", gap: 8 }}
+            onClick={startFlush}
+            disabled={loading || flushRunning}
+          >
+            <Zap size={15} /> Run System Flush
+          </button>
+        )}
+        {everStarted && !flushRunning && tasks.length > 0 && (
+          <span style={{ fontSize: 12, color: hasError ? "var(--red, #ef4444)" : "var(--accent)" }}>
+            {hasError ? "Completed with errors" : "Completed"}
+          </span>
+        )}
+      </div>
+    </div>
+  );
+}
 
 export function SettingsPage({ summary, loading, runAction }: SharedProps) {
   const [intervalDays,          setIntervalDays]          = useState(summary.autoScanEveryDays);
@@ -243,6 +387,9 @@ export function SettingsPage({ summary, loading, runAction }: SharedProps) {
           </div>
         </div>
       </div>
+
+      {/* ── System Flush ── */}
+      <FlushCard flushRunning={summary.flushRunning} loading={loading} />
     </>
   );
 }

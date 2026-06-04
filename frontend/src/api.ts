@@ -14,6 +14,7 @@ export type Summary = {
   komgaAutoEnabled: boolean;
   reorganizeOnDrain: boolean;
   reorganizeRunning: boolean;
+  flushRunning: boolean;
   limitedScanActiveThreshold: number;
   libraryRoot: string;
   komgaUrl: string;
@@ -180,6 +181,15 @@ export type DuplicateCandidate = {
   updated_at: string;
   download_folder_override: string | null;
   download_title_override: string | null;
+};
+
+export type FlushTaskStatus = "pending" | "running" | "done" | "error" | "cancelled";
+
+export type FlushTask = {
+  id: string;
+  label: string;
+  status: FlushTaskStatus;
+  detail: string;
 };
 
 export type MetadataCandidate = Book & {
@@ -405,6 +415,9 @@ export const api = {
       "/api/library/komga-cleanup",
       { method: "POST" },
     ),
+  systemFlush: () => request<{ started: boolean }>("/api/system/flush", { method: "POST" }),
+  systemFlushStop: () => request<{ stopped: boolean }>("/api/system/flush/stop", { method: "POST" }),
+  systemFlushStatus: () => request<{ running: boolean; tasks: FlushTask[] }>("/api/system/flush/status"),
   pauseQueue: () =>
     request<{ queuePaused: boolean }>("/api/queue/pause", { method: "POST" }),
   resumeQueue: () =>

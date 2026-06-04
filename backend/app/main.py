@@ -162,6 +162,10 @@ _reorg_lock = threading.Lock()
 def _reorg_running() -> bool:
     return _reorg_thread is not None and _reorg_thread.is_alive()
 
+
+from .flush import SystemFlusher  # noqa: E402  (after module-level vars are defined)
+_flusher = SystemFlusher()
+
 app = FastAPI(title="Manga Crawler")
 app.add_middleware(
     CORSMiddleware,
@@ -259,6 +263,7 @@ def summary(_user: dict = Depends(authenticated_user)) -> dict:
     data["limitedScanActive"] = repository.get_setting(conn, "limited_scan_active", "0") == "1"
     data["scanRunning"] = scan_scheduler.scan_running
     data["reorganizeRunning"] = _reorg_running()
+    data["flushRunning"] = _flusher.running
     data["limitedScanActiveThreshold"] = int(repository.get_setting(conn, "limited_scan_active_threshold", "300") or "300")
     return data
 
@@ -733,6 +738,35 @@ def komga_cleanup_endpoint(_user: dict = Depends(authenticated_user)) -> dict:
         f"{result.get('komgaScanned', 0)} range libraries scanned",
     )
     return result
+
+
+@app.post("/api/system/flush")
+def start_system_flush(_user: dict = Depends(authenticated_user)) -> dict:
+    started = _flusher.start(
+        conn=conn,
+        settings=settings,
+        download_queue=download_queue,
+        komga_client=komga_client,
+        asura_client=asura_client,
+        scan_scheduler=scan_scheduler,
+        scan_stop_event=scan_stop_event,
+    )
+    if not started:
+        raise HTTPException(status_code=409, detail="System flush already running")
+    repository.log(conn, "info", "System flush started")
+    return {"started": True}
+
+
+@app.post("/api/system/flush/stop")
+def stop_system_flush(_user: dict = Depends(authenticated_user)) -> dict:
+    _flusher.stop()
+    repository.log(conn, "info", "System flush stop requested")
+    return {"stopped": True}
+
+
+@app.get("/api/system/flush/status")
+def system_flush_status(_user: dict = Depends(authenticated_user)) -> dict:
+    return _flusher.status()
 
 
 @app.post("/api/scan/full")
