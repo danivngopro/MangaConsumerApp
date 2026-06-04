@@ -89,7 +89,7 @@ export function BrowsePage({ browseFilters, summary, loading }: Props) {
   ].filter(Boolean);
 
   return (
-    <>
+    <div className="browse-page">
       <div className="page-header browse-head">
         <div className="page-title-row">
           <h2>Browse</h2>
@@ -186,7 +186,7 @@ export function BrowsePage({ browseFilters, summary, loading }: Props) {
           onClose={() => setSelected(null)}
         />
       )}
-    </>
+    </div>
   );
 }
 
