@@ -3,7 +3,7 @@ import unittest
 
 from backend.app import repository
 from backend.app.database import init_db
-from backend.app.komga import latest_read_book
+from backend.app.komga import latest_read_book, komga_book_url
 
 
 class BrowseLibraryTests(unittest.TestCase):
@@ -100,7 +100,13 @@ class BrowseLibraryTests(unittest.TestCase):
         self.assertEqual(result["chapter_key"], "10")
         self.assertEqual(result["label"], "Chapter 10")
         self.assertEqual(result["page"], 8)
-        self.assertEqual(result["komga_url"], "https://komga.test/series/series-1/book/book-10")
+        self.assertEqual(result["komga_url"], "https://komga.test/book/book-10")
+
+    def test_komga_book_url_uses_public_book_route(self):
+        self.assertEqual(
+            komga_book_url("https://komga.emperordanivn.com", "0NR552YX3MQME"),
+            "https://komga.emperordanivn.com/book/0NR552YX3MQME",
+        )
 
 
 if __name__ == "__main__":

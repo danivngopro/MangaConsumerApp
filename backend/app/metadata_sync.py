@@ -110,7 +110,14 @@ def sync_manga_metadata_to_komga(conn: sqlite3.Connection, komga_client, manga_i
     if not manga:
         return {"synced": False, "needsReview": False, "error": "manga not found"}
 
-    if asura_client and manga.get("url") and not manga.get("asura_description"):
+    needs_asura_refresh = (
+        not manga.get("asura_description")
+        or not manga.get("asura_genres")
+        or not manga.get("asura_type")
+        or not manga.get("asura_author")
+        or not manga.get("asura_artist")
+    )
+    if asura_client and manga.get("url") and needs_asura_refresh:
         try:
             series, chapters = asura_client.fetch_series(manga["url"])
             repository.upsert_manga(conn, series.__dict__)

@@ -899,6 +899,27 @@ input:focus, select:focus, textarea:focus {
   text-overflow: ellipsis;
 }
 
+.library-book-main .library-book-genres {
+  display: flex;
+  gap: 4px;
+  flex-wrap: wrap;
+  white-space: normal;
+  overflow: hidden;
+  max-height: 24px;
+}
+
+.library-book-genres em {
+  display: inline-flex;
+  min-height: 20px;
+  align-items: center;
+  border-radius: 999px;
+  padding: 2px 6px;
+  background: rgba(255,255,255,0.045);
+  color: var(--text-2);
+  font-size: 10px;
+  font-style: normal;
+}
+
 .library-book-stats {
   display: flex;
   gap: 6px;
@@ -1064,6 +1085,36 @@ input:focus, select:focus, textarea:focus {
 }
 
 .metadata-row a:hover { color: #c4b5fd; }
+
+.metadata-row-wide {
+  grid-column: 1 / -1;
+}
+
+.genre-chip-wrap {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.genre-chip-wrap strong {
+  width: fit-content;
+  border-radius: 999px;
+  padding: 4px 9px;
+  background: var(--purple-lo);
+  color: #c4b5fd;
+  font-size: 12px;
+  font-weight: 600;
+}
+
+.metadata-sync-progress {
+  display: grid;
+  gap: 8px;
+  margin-bottom: 14px;
+  padding: 10px 12px;
+  border-radius: var(--r);
+  background: var(--bg-surface);
+  border: 1px solid var(--border);
+}
 
 .chapter-head {
   display: flex;

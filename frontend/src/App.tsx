@@ -59,6 +59,7 @@ const emptySummary: Summary = {
   limitedScanActiveThreshold: 300,
   libraryRoot: "",
   komgaUrl: "",
+  komgaPublicUrl: "",
   autoScanEveryDays: 0,
   downloadConcurrency: 1,
   browserConcurrency: 2,

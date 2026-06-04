@@ -18,6 +18,7 @@ export type Summary = {
   limitedScanActiveThreshold: number;
   libraryRoot: string;
   komgaUrl: string;
+  komgaPublicUrl: string;
   autoScanEveryDays: number;
   downloadConcurrency: number;
   browserConcurrency: number;

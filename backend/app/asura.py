@@ -254,6 +254,10 @@ class AsuraClient:
         description = fix_mojibake(description_node.get("content", "").strip()) if description_node else None
         episode_match = re.search(r'"numberOfEpisodes"\s*:\s*(\d+)', text)
         status_match = re.search(r"\b(ongoing|completed|hiatus|dropped)\b", soup.get_text(" ", strip=True), re.IGNORECASE)
+        series_type = self._detail_type(soup)
+        author = self._detail_creator(soup, "author")
+        artist = self._detail_creator(soup, "artist")
+        genres = self._detail_genres(soup)
         series = AsuraSeries(
             slug=self._slug_from_url(url) or slugify(title),
             title=fix_mojibake(title),
@@ -261,6 +265,10 @@ class AsuraClient:
             cover_url=cover_node.get("content") if cover_node else None,
             status=status_match.group(1).lower() if status_match else None,
             remote_chapter_count=int(episode_match.group(1)) if episode_match else 0,
+            type=series_type,
+            author=author,
+            artist=artist,
+            genres=genres,
             description=description,
         )
         chapters = self.parse_chapters(text, url)
@@ -281,6 +289,32 @@ class AsuraClient:
                 last_chapter_at=series.last_chapter_at,
             )
         return series, chapters
+
+    def _detail_creator(self, soup: BeautifulSoup, key: str) -> str | None:
+        node = soup.select_one(f'a[href*="{key}="]')
+        if not node:
+            return None
+        value = fix_mojibake(node.get_text(" ", strip=True))
+        return value or None
+
+    def _detail_genres(self, soup: BeautifulSoup) -> list[dict]:
+        genres: list[dict] = []
+        seen: set[str] = set()
+        for node in soup.select('a[href*="genres="]'):
+            href = node.get("href", "")
+            slug_match = re.search(r"genres=([^&]+)", href)
+            slug = slug_match.group(1).strip().lower() if slug_match else slugify(node.get_text(" ", strip=True))
+            name = fix_mojibake(node.get_text(" ", strip=True))
+            if not slug or slug in seen:
+                continue
+            seen.add(slug)
+            genres.append({"name": name or self._title_from_slug(slug), "slug": slug})
+        return genres
+
+    def _detail_type(self, soup: BeautifulSoup) -> str | None:
+        text = soup.get_text(" ", strip=True)
+        match = re.search(r"\b(manhwa|manhua|manga)\b", text, re.IGNORECASE)
+        return match.group(1).lower() if match else None
 
     def parse_chapters(self, text: str, series_url: str) -> list[AsuraChapter]:
         found: dict[str, AsuraChapter] = {}

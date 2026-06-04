@@ -37,6 +37,26 @@ class FallbackKomgaClient(FakeKomgaClient):
         return None
 
 
+class DetailRefreshClient:
+    def fetch_series(self, _url: str):
+        return (
+            AsuraSeries(
+                "murim-login",
+                "Murim Login",
+                "https://asurascans.com/comics/murim-login",
+                None,
+                "ongoing",
+                100,
+                type="manhwa",
+                author="Zero Big",
+                artist="Jang Cheol Byeok",
+                genres=[{"name": "Action", "slug": "action"}],
+                description="Existing but refreshed.",
+            ),
+            [],
+        )
+
+
 class MetadataSyncTests(unittest.TestCase):
     def setUp(self) -> None:
         self.conn = sqlite3.connect(":memory:")
@@ -200,6 +220,26 @@ class MetadataSyncTests(unittest.TestCase):
         self.assertEqual(client.payloads[0][0], "series-by-title")
         row = repository.get_manga_detail(self.conn, manga_id)
         self.assertIsNone(row["metadata_last_error"])
+
+    def test_metadata_sync_refreshes_asura_when_genres_are_missing_even_if_description_exists(self):
+        manga_id = repository.upsert_manga(
+            self.conn,
+            {
+                "slug": "murim-login",
+                "title": "Murim Login",
+                "url": "https://asurascans.com/comics/murim-login",
+                "status": "completed",
+                "remote_chapter_count": 100,
+                "description": "Already had a description.",
+            },
+        )
+        repository.set_manga_download_override(self.conn, manga_id, "/books/Murim Login", "Murim Login")
+
+        sync_manga_metadata_to_komga(self.conn, FakeKomgaClient(), manga_id, DetailRefreshClient())
+
+        row = repository.get_manga_detail(self.conn, manga_id)
+        self.assertEqual(row["asura_genres"], [{"name": "Action", "slug": "action"}])
+        self.assertEqual(row["asura_author"], "Zero Big")
 
 
 if __name__ == "__main__":

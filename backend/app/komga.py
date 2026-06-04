@@ -226,6 +226,10 @@ def _book_label(book: dict, chapter: str) -> str:
     return str(metadata.get("title") or book.get("name") or f"Chapter {chapter}")
 
 
+def komga_book_url(komga_public_url: str, book_id: str) -> str:
+    return f"{komga_public_url.rstrip('/')}/book/{book_id}"
+
+
 def _has_read_progress(book: dict) -> bool:
     progress = book.get("readProgress") or {}
     status = str(book.get("readStatus") or "").upper()
@@ -236,7 +240,7 @@ def _has_read_progress(book: dict) -> bool:
     )
 
 
-def latest_read_book(books: list[dict], komga_url: str, series_id: str) -> dict | None:
+def latest_read_book(books: list[dict], komga_public_url: str, series_id: str) -> dict | None:
     read_books = [book for book in books if book.get("id") and _has_read_progress(book)]
     if not read_books:
         return None
@@ -251,7 +255,7 @@ def latest_read_book(books: list[dict], komga_url: str, series_id: str) -> dict 
         "label": _book_label(selected, chapter),
         "page": int(progress.get("page") or 0),
         "completed": bool(progress.get("completed")),
-        "komga_url": f"{komga_url.rstrip('/')}/series/{series_id}/book/{book_id}",
+        "komga_url": komga_book_url(komga_public_url, book_id),
     }
 
 

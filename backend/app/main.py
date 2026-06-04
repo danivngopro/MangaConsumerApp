@@ -17,7 +17,7 @@ from . import repository
 from .asura import AsuraClient
 from .config import load_settings
 from .database import connect, init_db
-from .komga import KomgaClient, KomgaSettings, latest_read_book
+from .komga import KomgaClient, KomgaSettings, komga_book_url, latest_read_book
 from .library import scan_library, transfer_chapters
 from .metadata_sync import sync_manga_metadata_to_komga
 from .queue import DownloadQueue
@@ -220,6 +220,7 @@ def health() -> dict:
         "ok": True,
         "libraryRoot": str(settings.library_root),
         "komgaUrl": settings.komga_url,
+        "komgaPublicUrl": settings.komga_public_url,
         "komgaBooksRootDocker": settings.komga_books_root_docker,
         "database": str(db_path),
         "queuePaused": download_queue.paused,
@@ -267,6 +268,7 @@ def summary(_user: dict = Depends(authenticated_user)) -> dict:
     data["queuePaused"] = download_queue.paused
     data["libraryRoot"] = str(settings.library_root)
     data["komgaUrl"] = settings.komga_url
+    data["komgaPublicUrl"] = settings.komga_public_url
     data["komgaAutoEnabled"] = repository.get_setting(conn, "komga_auto_enabled", "0") == "1"
     data["reorganizeOnDrain"] = repository.get_setting(conn, "reorganize_on_drain", "0") == "1"
     data["autoScanEveryDays"] = int(repository.get_setting(conn, "auto_scan_every_days", "0") or "0")
@@ -307,10 +309,10 @@ def book_detail(manga_id: int, _user: dict = Depends(authenticated_user)) -> dic
                 )
                 key = chapter_key(str(number))
                 if key and book.get("id"):
-                    komga_by_chapter[key] = f"{settings.komga_url.rstrip('/')}/series/{detail['komga_series_id']}/book/{book['id']}"
+                    komga_by_chapter[key] = komga_book_url(settings.komga_public_url, str(book["id"]))
             for chapter in detail.get("chapters", []):
                 chapter["komga_url"] = komga_by_chapter.get(chapter.get("chapter_key"))
-            detail["latest_read"] = latest_read_book(books, settings.komga_url, str(detail["komga_series_id"]))
+            detail["latest_read"] = latest_read_book(books, settings.komga_public_url, str(detail["komga_series_id"]))
         except Exception as exc:
             repository.log(conn, "warning", f"Could not load Komga chapter links for {detail['title']}: {exc}")
     return detail
@@ -685,7 +687,7 @@ def browse_books(payload: LocalBrowseRequest, _user: dict = Depends(authenticate
         max_chapters=payload.maxChapters,
         limit=payload.limit,
         offset=payload.offset,
-        komga_url=settings.komga_url,
+        komga_url=settings.komga_public_url,
     )
 
 
@@ -694,6 +696,7 @@ def get_settings(_user: dict = Depends(authenticated_user)) -> dict:
     return {
         "libraryRoot": str(settings.library_root),
         "komgaUrl": settings.komga_url,
+        "komgaPublicUrl": settings.komga_public_url,
         "komgaBooksRootDocker": settings.komga_books_root_docker,
         "komgaAutoEnabled": repository.get_setting(conn, "komga_auto_enabled", "0") == "1",
         "reorganizeOnDrain": repository.get_setting(conn, "reorganize_on_drain", "0") == "1",

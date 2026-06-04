@@ -7,6 +7,7 @@ import type { SharedProps } from "../App";
 export function MetadataPage({ loading, runAction }: SharedProps) {
   const [items, setItems] = useState<MetadataCandidate[]>([]);
   const [filter, setFilter] = useState<"all" | "unsynced" | "error" | "synced">("unsynced");
+  const [syncProgress, setSyncProgress] = useState<{ current: number; total: number; title: string } | null>(null);
 
   async function refreshMetadata() {
     setItems(await api.metadataCandidates());
@@ -17,8 +18,20 @@ export function MetadataPage({ loading, runAction }: SharedProps) {
   }, []);
 
   async function syncAll() {
-    await runAction("Sync verified metadata", api.syncMetadata);
-    await refreshMetadata();
+    const candidates = items.filter((item) => !item.metadata_synced_at || item.metadata_last_error);
+    const targets = candidates.length ? candidates : items;
+    setSyncProgress({ current: 0, total: targets.length, title: "Starting" });
+    try {
+      for (let index = 0; index < targets.length; index += 1) {
+        const item = targets[index];
+        setSyncProgress({ current: index, total: targets.length, title: item.title });
+        await api.syncMetadata([item.id]);
+        setSyncProgress({ current: index + 1, total: targets.length, title: item.title });
+      }
+      await refreshMetadata();
+    } finally {
+      setSyncProgress(null);
+    }
   }
 
   async function syncOne(item: MetadataCandidate) {
@@ -47,7 +60,7 @@ export function MetadataPage({ loading, runAction }: SharedProps) {
           <button className="btn-ghost btn-sm" onClick={refreshMetadata} disabled={loading}>
             <RefreshCw size={13} /> Refresh
           </button>
-          <button className="btn-primary btn-sm" onClick={syncAll} disabled={loading || items.length === 0}>
+          <button className="btn-primary btn-sm" onClick={syncAll} disabled={loading || Boolean(syncProgress) || items.length === 0}>
             <UploadCloud size={13} /> Sync verified
           </button>
         </div>
@@ -65,6 +78,24 @@ export function MetadataPage({ loading, runAction }: SharedProps) {
           Sync verified uses books already found by local library scan or confirmed duplicate matching, refreshes available Asura metadata including descriptions, then updates the matched Komga series. Run a library scan first if new local folders are missing here.
         </span>
       </div>
+
+      {syncProgress && (
+        <div className="metadata-sync-progress">
+          <div className="total-bar-header">
+            <span className="total-bar-label">Syncing metadata</span>
+            <span className="total-bar-pct">
+              {syncProgress.current} / {syncProgress.total}
+            </span>
+            <span className="total-bar-extra">{syncProgress.title}</span>
+          </div>
+          <div className="track">
+            <div
+              className="track-fill"
+              style={{ width: `${syncProgress.total ? (syncProgress.current / syncProgress.total) * 100 : 0}%` }}
+            />
+          </div>
+        </div>
+      )}
 
       <div className="card" style={{ marginBottom: 14 }}>
         <div className="filter-row">

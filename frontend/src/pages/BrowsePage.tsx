@@ -165,7 +165,10 @@ export function BrowsePage({ browseFilters, summary, loading }: Props) {
               <span className="library-book-main">
                 <strong>{book.title}</strong>
                 <span>{[book.status, book.asura_type, `${book.local_chapter_count} chapters`].filter(Boolean).join(" / ")}</span>
-                <small>{genreNames(book).slice(0, 4).join(", ") || "No genre metadata"}</small>
+                <span className="library-book-genres">
+                  {genreNames(book).slice(0, 4).map((genre) => <em key={genre}>{genre}</em>)}
+                  {genreNames(book).length === 0 && <small>No genre metadata</small>}
+                </span>
               </span>
               <span className="library-book-stats">
                 <span>{book.missing_count} missing</span>
@@ -179,7 +182,7 @@ export function BrowsePage({ browseFilters, summary, loading }: Props) {
       {(selected || detailLoading) && (
         <BookModal
           book={selected}
-          komgaUrl={summary.komgaUrl}
+          komgaUrl={summary.komgaPublicUrl || summary.komgaUrl}
           loading={detailLoading}
           chapterPage={chapterPage}
           setChapterPage={setChapterPage}
@@ -265,7 +268,7 @@ function BookModal({
             <div className="metadata-panel">
               <span className="field-label">Metadata</span>
               <div className="metadata-grid">
-                <Meta label="Genres" value={genreNames(book).join(", ") || "n/a"} />
+                <GenreMeta genres={genreNames(book)} />
                 <Meta label="Asura" value={book.url} href={book.url} />
                 <Meta label="Komga series" value={komgaSeriesUrl || "sync metadata to link"} href={komgaSeriesUrl || undefined} />
                 <Meta label="Last scanned" value={book.last_scanned_at ? new Date(book.last_scanned_at).toLocaleString() : "never"} />
@@ -305,6 +308,21 @@ function Meta({ label, value, href }: { label: string; value: string; href?: str
     <div className="metadata-row">
       <span>{label}</span>
       {href ? <a href={href} target="_blank" rel="noreferrer">{value}</a> : <strong>{value}</strong>}
+    </div>
+  );
+}
+
+function GenreMeta({ genres }: { genres: string[] }) {
+  return (
+    <div className="metadata-row metadata-row-wide">
+      <span>Genres</span>
+      {genres.length > 0 ? (
+        <div className="genre-chip-wrap">
+          {genres.map((genre) => <strong key={genre}>{genre}</strong>)}
+        </div>
+      ) : (
+        <strong>n/a</strong>
+      )}
     </div>
   );
 }

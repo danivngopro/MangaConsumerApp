@@ -22,6 +22,7 @@ class Settings:
     request_delay_seconds: float
     auto_scan_every_days: int
     komga_url: str
+    komga_public_url: str
     komga_username: str
     komga_password: str
     komga_books_root_docker: str
@@ -67,6 +68,7 @@ def load_settings() -> Settings:
         request_delay_seconds=max(0.0, _float_env("REQUEST_DELAY_SECONDS", 1.0)),
         auto_scan_every_days=max(0, _int_env("AUTO_SCAN_EVERY_DAYS", 0)),
         komga_url=os.getenv("KOMGA_URL", "http://localhost:25600").rstrip("/"),
+        komga_public_url=os.getenv("KOMGA_PUBLIC_URL", "https://komga.emperordanivn.com").rstrip("/"),
         komga_username=os.getenv("KOMGA_USERNAME", ""),
         komga_password=os.getenv("KOMGA_PASSWORD", ""),
         komga_books_root_docker=os.getenv("KOMGA_BOOKS_ROOT_DOCKER", "/books").rstrip("/"),
