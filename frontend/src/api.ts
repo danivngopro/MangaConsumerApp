@@ -247,6 +247,23 @@ export type MetadataCandidate = Book & {
   metadata_last_error: string | null;
 };
 
+export type UnmatchedLocalBook = {
+  normalized_title: string;
+  title: string;
+  folder_path: string;
+  chapter_count: number;
+  chapters: string[];
+  updated_at: string;
+};
+
+export type MetadataDiscoverResult = {
+  processed: number;
+  autoLinked: number;
+  reviewNeeded: number;
+  skipped: number;
+  errors: string[];
+};
+
 export type DebugThreads = {
   threads: Array<{
     name: string;
@@ -347,6 +364,12 @@ export const api = {
       { method: "POST", body: JSON.stringify({ remote_manga_id: remoteMangaId, main_folder: mainFolder }) },
     ),
   metadataCandidates: () => request<MetadataCandidate[]>("/api/metadata/candidates"),
+  metadataUnmatched: () => request<UnmatchedLocalBook[]>("/api/metadata/unmatched"),
+  discoverMetadata: (limit?: number | null) =>
+    request<MetadataDiscoverResult>("/api/metadata/discover", {
+      method: "POST",
+      body: JSON.stringify({ limit: limit ?? null }),
+    }),
   syncMetadata: (mangaIds?: number[]) =>
     request<{ synced: number; needsReview: number; errors: string[] }>(
       "/api/metadata/sync",

@@ -1,16 +1,24 @@
 import { useEffect, useState } from "react";
 import { RefreshCw, Tags, UploadCloud } from "lucide-react";
-import { api, MetadataCandidate } from "../api";
+import { api, MetadataCandidate, MetadataDiscoverResult, UnmatchedLocalBook } from "../api";
 import { StatCard } from "../components/shared";
 import type { SharedProps } from "../App";
 
 export function MetadataPage({ summary, loading, runAction }: SharedProps) {
   const [items, setItems] = useState<MetadataCandidate[]>([]);
+  const [unmatched, setUnmatched] = useState<UnmatchedLocalBook[]>([]);
   const [filter, setFilter] = useState<"all" | "unsynced" | "error" | "synced">("unsynced");
   const [syncProgress, setSyncProgress] = useState<{ current: number; total: number; title: string } | null>(null);
+  const [discovering, setDiscovering] = useState(false);
+  const [discoverResult, setDiscoverResult] = useState<MetadataDiscoverResult | null>(null);
 
   async function refreshMetadata() {
-    setItems(await api.metadataCandidates());
+    const [nextItems, nextUnmatched] = await Promise.all([
+      api.metadataCandidates(),
+      api.metadataUnmatched(),
+    ]);
+    setItems(nextItems);
+    setUnmatched(nextUnmatched);
   }
 
   useEffect(() => {
@@ -47,6 +55,18 @@ export function MetadataPage({ summary, loading, runAction }: SharedProps) {
     await refreshMetadata();
   }
 
+  async function discoverUnmatched() {
+    setDiscovering(true);
+    setDiscoverResult(null);
+    try {
+      const result = await api.discoverMetadata();
+      setDiscoverResult(result);
+      await refreshMetadata();
+    } finally {
+      setDiscovering(false);
+    }
+  }
+
   const synced = items.filter((item) => item.metadata_synced_at && !item.metadata_last_error).length;
   const errors = items.filter((item) => item.metadata_last_error).length;
   const unsynced = items.filter((item) => !item.metadata_synced_at && !item.metadata_last_error).length;
@@ -69,6 +89,9 @@ export function MetadataPage({ summary, loading, runAction }: SharedProps) {
           <button className="btn-ghost btn-sm" onClick={refreshMetadata} disabled={loading}>
             <RefreshCw size={13} /> Refresh
           </button>
+          <button className="btn-ghost btn-sm" onClick={discoverUnmatched} disabled={loading || discovering || unmatched.length === 0}>
+            <RefreshCw size={13} /> Discover unmatched
+          </button>
           <button className="btn-primary btn-sm" onClick={syncAll} disabled={loading || Boolean(syncProgress) || items.length === 0}>
             <UploadCloud size={13} /> Sync verified
           </button>
@@ -78,6 +101,7 @@ export function MetadataPage({ summary, loading, runAction }: SharedProps) {
       <div className="metrics-grid" style={{ marginBottom: 14 }}>
         <StatCard label="Local books" value={`${summary.localBooks}`} />
         <StatCard label="Verified candidates" value={`${items.length}`} />
+        <StatCard label="Unmatched local" value={`${unmatched.length}`} />
         <StatCard label="Unsynced" value={`${unsynced}`} />
         <StatCard label="Synced" value={`${synced}`} />
         <StatCard label="Errors / review" value={`${errors}`} />
@@ -90,6 +114,16 @@ export function MetadataPage({ summary, loading, runAction }: SharedProps) {
           Sync verified only processes local books that already have a verified Asura match in this app. Local books without a matched Asura manga are counted in Local books, but not Verified candidates yet.
         </span>
       </div>
+
+      {discoverResult && (
+        <div className="status-bar" style={{ marginBottom: 14, alignItems: "flex-start" }}>
+          <span className="status-dot" style={{ marginTop: 7 }} />
+          <span>
+            Discovery processed {discoverResult.processed} local books: {discoverResult.autoLinked} auto-linked, {discoverResult.reviewNeeded} sent to duplicate review, {discoverResult.skipped} skipped.
+            {discoverResult.errors.length > 0 && ` ${discoverResult.errors.length} errors were logged.`}
+          </span>
+        </div>
+      )}
 
       {syncProgress && (
         <div className="metadata-sync-progress">

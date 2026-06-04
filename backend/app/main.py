@@ -19,6 +19,7 @@ from .config import load_settings
 from .database import connect, init_db
 from .komga import KomgaClient, KomgaSettings, komga_book_url, latest_read_book
 from .library import scan_library, transfer_chapters
+from .metadata_discovery import discover_unmatched_local_metadata, unmatched_local_books
 from .metadata_sync import sync_manga_metadata_to_komga
 from .queue import DownloadQueue
 from .scanner import scan_specific, scan_priority_books
@@ -54,6 +55,10 @@ class LocalDupMainRequest(BaseModel):
 
 class MetadataSyncRequest(BaseModel):
     mangaIds: list[int] | None = None
+
+
+class MetadataDiscoverRequest(BaseModel):
+    limit: int | None = None
 
 
 class SettingsRequest(BaseModel):
@@ -341,6 +346,23 @@ def duplicate_candidates(_user: dict = Depends(authenticated_user)) -> list[dict
 @app.get("/api/metadata/candidates")
 def metadata_candidates(_user: dict = Depends(authenticated_user)) -> list[dict]:
     return repository.metadata_sync_candidates(conn)
+
+
+@app.get("/api/metadata/unmatched")
+def metadata_unmatched(_user: dict = Depends(authenticated_user)) -> list[dict]:
+    return unmatched_local_books(conn)
+
+
+@app.post("/api/metadata/discover")
+def discover_metadata(payload: MetadataDiscoverRequest | None = None, _user: dict = Depends(authenticated_user)) -> dict:
+    result = discover_unmatched_local_metadata(conn, asura_client, payload.limit if payload else None)
+    repository.log(
+        conn,
+        "info",
+        f"Metadata discovery complete: {result['autoLinked']} auto-linked, "
+        f"{result['reviewNeeded']} review, {result['skipped']} skipped, {len(result['errors'])} errors",
+    )
+    return result
 
 
 @app.post("/api/metadata/sync")
