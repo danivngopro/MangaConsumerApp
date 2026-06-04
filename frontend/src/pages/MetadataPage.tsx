@@ -4,7 +4,7 @@ import { api, MetadataCandidate } from "../api";
 import { StatCard } from "../components/shared";
 import type { SharedProps } from "../App";
 
-export function MetadataPage({ loading, runAction }: SharedProps) {
+export function MetadataPage({ summary, loading, runAction }: SharedProps) {
   const [items, setItems] = useState<MetadataCandidate[]>([]);
   const [filter, setFilter] = useState<"all" | "unsynced" | "error" | "synced">("unsynced");
   const [syncProgress, setSyncProgress] = useState<{ current: number; total: number; title: string } | null>(null);
@@ -76,6 +76,8 @@ export function MetadataPage({ loading, runAction }: SharedProps) {
       </div>
 
       <div className="metrics-grid" style={{ marginBottom: 14 }}>
+        <StatCard label="Local books" value={`${summary.localBooks}`} />
+        <StatCard label="Verified candidates" value={`${items.length}`} />
         <StatCard label="Unsynced" value={`${unsynced}`} />
         <StatCard label="Synced" value={`${synced}`} />
         <StatCard label="Errors / review" value={`${errors}`} />
@@ -85,7 +87,7 @@ export function MetadataPage({ loading, runAction }: SharedProps) {
       <div className="status-bar" style={{ marginBottom: 14, alignItems: "flex-start" }}>
         <span className="status-dot" style={{ marginTop: 7 }} />
         <span>
-          Sync verified uses books already found by local library scan or confirmed duplicate matching, stores Asura metadata locally for Browse, then updates the matched Komga series. It also revisits already-synced rows when description, genres, or type are missing.
+          Sync verified only processes local books that already have a verified Asura match in this app. Local books without a matched Asura manga are counted in Local books, but not Verified candidates yet.
         </span>
       </div>
 
