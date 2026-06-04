@@ -78,6 +78,7 @@ def scan_library(conn: sqlite3.Connection, library_root: Path) -> dict:
             repository.upsert_local_duplicate_candidate(
                 conn,
                 keep["title"],
+                keep["folder_path"],
                 delete["title"],
                 delete["folder_path"],
                 int(delete["chapter_count"]),

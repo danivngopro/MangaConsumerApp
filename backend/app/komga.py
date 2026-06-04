@@ -118,6 +118,28 @@ class KomgaClient:
                 return series
         return None
 
+    def find_series_by_title(self, title: str) -> dict | None:
+        """Search for a series across all Komga libraries by title (handles range libraries)."""
+        sanitized = self.sanitize_name(title).lower()
+        try:
+            response = self.session.get(
+                f"{self.settings.url}/api/v1/series",
+                params={"search": title, "unpaged": "true"},
+                timeout=30,
+            )
+            response.raise_for_status()
+            data = response.json()
+            content = data.get("content", data if isinstance(data, list) else [])
+            for series in content:
+                name = str(series.get("name") or "").lower()
+                meta = series.get("metadata") or {}
+                meta_title = str(meta.get("title") or "").lower()
+                if name == sanitized or meta_title == sanitized:
+                    return series
+            return None
+        except Exception:
+            return None
+
     def update_series_metadata(self, series_id: str, payload: dict) -> None:
         response = self.session.patch(
             f"{self.settings.url}/api/v1/series/{series_id}/metadata",

@@ -371,7 +371,9 @@ def metadata_sync_candidates(conn: sqlite3.Connection) -> list[dict]:
             """
             SELECT *
             FROM manga
-            WHERE COALESCE(asura_genres_json, '[]') != '[]'
+            WHERE local_folder IS NOT NULL
+               OR download_folder_override IS NOT NULL
+               OR COALESCE(asura_genres_json, '[]') != '[]'
                OR asura_type IS NOT NULL
                OR asura_author IS NOT NULL
                OR asura_artist IS NOT NULL
@@ -814,6 +816,7 @@ def get_duplicate_candidate_for_manga(conn: sqlite3.Connection, manga_id: int, l
 def upsert_local_duplicate_candidate(
     conn: sqlite3.Connection,
     keep_title: str,
+    keep_folder: str,
     delete_title: str,
     delete_folder: str,
     delete_chapter_count: int,
@@ -837,6 +840,7 @@ def upsert_local_duplicate_candidate(
                 """
                 UPDATE duplicate_candidates
                 SET local_title = ?,
+                    remote_folder = ?,
                     local_chapter_count = ?,
                     remote_chapter_count = ?,
                     score = ?,
@@ -844,19 +848,19 @@ def upsert_local_duplicate_candidate(
                     updated_at = ?
                 WHERE id = ?
                 """,
-                (delete_title, delete_chapter_count, keep_chapter_count, score, reason, now, existing["id"]),
+                (delete_title, keep_folder, delete_chapter_count, keep_chapter_count, score, reason, now, existing["id"]),
             )
         else:
             conn.execute(
                 """
                 INSERT INTO duplicate_candidates(
-                    candidate_kind, remote_manga_id, remote_title, local_title,
-                    local_folder, local_chapter_count, remote_chapter_count,
+                    candidate_kind, remote_manga_id, remote_title, remote_folder,
+                    local_title, local_folder, local_chapter_count, remote_chapter_count,
                     score, reason, status, created_at, updated_at
                 )
-                VALUES ('local_local', NULL, ?, ?, ?, ?, ?, ?, ?, 'pending', ?, ?)
+                VALUES ('local_local', NULL, ?, ?, ?, ?, ?, ?, ?, ?, 'pending', ?, ?)
                 """,
-                (keep_title, delete_title, delete_folder, delete_chapter_count, keep_chapter_count, score, reason, now, now),
+                (keep_title, keep_folder, delete_title, delete_folder, delete_chapter_count, keep_chapter_count, score, reason, now, now),
             )
         conn.commit()
 

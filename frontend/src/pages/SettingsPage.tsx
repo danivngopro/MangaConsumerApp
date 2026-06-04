@@ -1,4 +1,5 @@
 import { FormEvent, useEffect, useState } from "react";
+import { FolderSync } from "lucide-react";
 import { api } from "../api";
 import { StatCard } from "../components/shared";
 import type { SharedProps } from "../App";
@@ -10,6 +11,7 @@ export function SettingsPage({ summary, loading, runAction }: SharedProps) {
   const [imageDownloadWorkers,  setImageDownloadWorkers]  = useState(summary.imageDownloadWorkers);
   const [readerEngine,          setReaderEngine]          = useState<"playwright" | "selenium">(summary.readerEngine);
   const [komgaAutoEnabled,      setKomgaAutoEnabled]      = useState(summary.komgaAutoEnabled);
+  const [reorganizeOnDrain,     setReorganizeOnDrain]     = useState(summary.reorganizeOnDrain);
 
   // Sync from backend on every summary refresh
   useEffect(() => {
@@ -19,6 +21,7 @@ export function SettingsPage({ summary, loading, runAction }: SharedProps) {
     setImageDownloadWorkers(summary.imageDownloadWorkers);
     setReaderEngine(summary.readerEngine);
     setKomgaAutoEnabled(summary.komgaAutoEnabled);
+    setReorganizeOnDrain(summary.reorganizeOnDrain);
   }, [
     summary.autoScanEveryDays,
     summary.downloadConcurrency,
@@ -26,6 +29,7 @@ export function SettingsPage({ summary, loading, runAction }: SharedProps) {
     summary.imageDownloadWorkers,
     summary.readerEngine,
     summary.komgaAutoEnabled,
+    summary.reorganizeOnDrain,
   ]);
 
   async function submitSettings(event: FormEvent<HTMLFormElement>) {
@@ -38,6 +42,7 @@ export function SettingsPage({ summary, loading, runAction }: SharedProps) {
         imageDownloadWorkers,
         readerEngine,
         komgaAutoEnabled,
+        reorganizeOnDrain,
       ),
     );
   }
@@ -144,6 +149,19 @@ export function SettingsPage({ summary, loading, runAction }: SharedProps) {
               </span>
             </div>
 
+            <div className="field-row">
+              <input
+                id="reorg-drain"
+                type="checkbox"
+                checked={reorganizeOnDrain}
+                onChange={(e) => setReorganizeOnDrain(e.target.checked)}
+              />
+              <label htmlFor="reorg-drain">Auto reorganize by chapter count after downloads</label>
+              <span className="field-help" style={{ flexBasis: "100%" }}>
+                Moves each book into the correct 0–50 / 50–100 / … / 500+ library after the queue drains. Requires "Auto Komga import/scan" to be enabled.
+              </span>
+            </div>
+
             <button
               className="btn-primary"
               style={{ width: "fit-content", height: 38 }}
@@ -194,6 +212,16 @@ export function SettingsPage({ summary, loading, runAction }: SharedProps) {
                 disabled={loading || summary.failedJobs === 0}
               >
                 Retry failed
+              </button>
+              <button
+                className="btn-ghost btn-sm"
+                title="Move each local book into its 0-50 / 50-100 / … / 500+ chapter-range Komga library"
+                onClick={() =>
+                  runAction("Reorganize by chapter count", api.reorganizeLibrary)
+                }
+                disabled={loading || summary.queuedJobs + summary.runningJobs > 0}
+              >
+                <FolderSync size={13} /> Reorganize by chapters
               </button>
             </div>
           </div>

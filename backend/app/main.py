@@ -46,6 +46,10 @@ class DuplicateGroupResolveRequest(BaseModel):
     main_folder: str
 
 
+class LocalDupMainRequest(BaseModel):
+    main_folder: str
+
+
 class MetadataSyncRequest(BaseModel):
     mangaIds: list[int] | None = None
 
@@ -57,6 +61,7 @@ class SettingsRequest(BaseModel):
     imageDownloadWorkers: int = 4
     readerEngine: str = "playwright"
     komgaAutoEnabled: bool = False
+    reorganizeOnDrain: bool = False
 
 
 class BrowseSearchRequest(BaseModel):
@@ -235,6 +240,7 @@ def summary(_user: dict = Depends(authenticated_user)) -> dict:
     data["libraryRoot"] = str(settings.library_root)
     data["komgaUrl"] = settings.komga_url
     data["komgaAutoEnabled"] = repository.get_setting(conn, "komga_auto_enabled", "0") == "1"
+    data["reorganizeOnDrain"] = repository.get_setting(conn, "reorganize_on_drain", "0") == "1"
     data["autoScanEveryDays"] = int(repository.get_setting(conn, "auto_scan_every_days", "0") or "0")
     data["downloadConcurrency"] = download_queue.concurrency
     data["browserConcurrency"] = download_queue.browser_concurrency
@@ -344,6 +350,74 @@ def delete_duplicate_local(candidate_id: int, _user: dict = Depends(authenticate
     except Exception as exc:
         repository.log(conn, "error", f"Duplicate local delete failed for {folder}: {exc}")
         raise HTTPException(status_code=502, detail=str(exc)) from exc
+
+
+@app.post("/api/duplicates/{candidate_id}/resolve-local-main")
+def resolve_local_dup_main(candidate_id: int, payload: LocalDupMainRequest, _user: dict = Depends(authenticated_user)) -> dict:
+    row = conn.execute("SELECT * FROM duplicate_candidates WHERE id = ? AND candidate_kind = 'local_local'", (candidate_id,)).fetchone()
+    if row is None:
+        raise HTTPException(status_code=404, detail="local_local candidate not found")
+
+    keep_folder = Path(row["remote_folder"]) if row["remote_folder"] else None
+    delete_folder = Path(row["local_folder"])
+    main_is_keep = payload.main_folder == row["remote_folder"]
+    main_is_delete = payload.main_folder == row["local_folder"]
+
+    if not main_is_keep and not main_is_delete:
+        raise HTTPException(status_code=400, detail="main_folder does not match either candidate folder")
+
+    root = settings.library_root.resolve()
+    main_folder = Path(payload.main_folder)
+    try:
+        target = main_folder.resolve()
+    except FileNotFoundError:
+        target = main_folder
+    if root not in target.parents and target != root:
+        raise HTTPException(status_code=400, detail="main folder is outside the configured library root")
+
+    # Transfer chapters from the richer folder to main if main has fewer
+    transferred = 0
+    if main_is_delete:
+        # User picked the "delete" folder as main; "keep" folder is the dup
+        main_folder_path = delete_folder
+        dup_folder_path = keep_folder
+        main_count = int(row["local_chapter_count"] or 0)
+        dup_count = int(row["remote_chapter_count"] or 0)
+    else:
+        main_folder_path = keep_folder
+        dup_folder_path = delete_folder
+        main_count = int(row["remote_chapter_count"] or 0)
+        dup_count = int(row["local_chapter_count"] or 0)
+
+    if dup_folder_path and dup_count > main_count and main_folder_path and main_folder_path.exists() and dup_folder_path.exists():
+        try:
+            transferred = transfer_chapters(dup_folder_path, main_folder_path)
+        except Exception as exc:
+            repository.log(conn, "warning", f"Chapter transfer failed for local dup {candidate_id}: {exc}")
+
+    deleted_folder = None
+    if dup_folder_path and dup_folder_path.exists():
+        try:
+            komga_client.delete_library_for_book(dup_folder_path.name)
+        except Exception:
+            pass
+        try:
+            shutil.rmtree(dup_folder_path)
+            deleted_folder = str(dup_folder_path)
+        except Exception as exc:
+            repository.log(conn, "warning", f"Could not delete dup folder {dup_folder_path}: {exc}")
+
+    now = repository.utc_now()
+    conn.execute(
+        "UPDATE duplicate_candidates SET status = 'confirmed_exists', resolved_at = ?, updated_at = ? WHERE id = ?",
+        (now, now, candidate_id),
+    )
+    conn.commit()
+    repository.log(
+        conn, "info",
+        f"Local dup {candidate_id} resolved: main={main_folder_path}, deleted={deleted_folder}, transferred={transferred}",
+    )
+    return {"deleted": deleted_folder, "transferred": transferred, "mainFolder": str(main_folder_path)}
 
 
 @app.post("/api/duplicates/group/resolve-main")
@@ -553,6 +627,7 @@ def get_settings(_user: dict = Depends(authenticated_user)) -> dict:
         "komgaUrl": settings.komga_url,
         "komgaBooksRootDocker": settings.komga_books_root_docker,
         "komgaAutoEnabled": repository.get_setting(conn, "komga_auto_enabled", "0") == "1",
+        "reorganizeOnDrain": repository.get_setting(conn, "reorganize_on_drain", "0") == "1",
         "autoScanEveryDays": int(repository.get_setting(conn, "auto_scan_every_days", "0") or "0"),
         "downloadConcurrency": download_queue.concurrency,
         "browserConcurrency": download_queue.browser_concurrency,
@@ -573,24 +648,40 @@ def update_settings(payload: SettingsRequest, _user: dict = Depends(authenticate
     image_download_workers = max(1, min(8, int(payload.imageDownloadWorkers)))
     reader_engine = payload.readerEngine if payload.readerEngine in {"playwright", "selenium"} else "playwright"
     komga_auto_enabled = bool(payload.komgaAutoEnabled)
+    reorganize_on_drain = bool(payload.reorganizeOnDrain)
     repository.set_setting(conn, "auto_scan_every_days", str(days))
     repository.set_setting(conn, "download_concurrency", str(concurrency))
     repository.set_setting(conn, "browser_concurrency", str(browser_concurrency))
     repository.set_setting(conn, "image_download_workers", str(image_download_workers))
     repository.set_setting(conn, "reader_engine", reader_engine)
     repository.set_setting(conn, "komga_auto_enabled", "1" if komga_auto_enabled else "0")
+    repository.set_setting(conn, "reorganize_on_drain", "1" if reorganize_on_drain else "0")
     download_queue.set_concurrency(concurrency)
     download_queue.set_reader_options(browser_concurrency, image_download_workers, reader_engine)
     repository.log(conn, "info", f"Auto full scan interval set to {days} days")
     repository.log(conn, "info", f"Download concurrency set to {concurrency}")
     repository.log(conn, "info", f"Reader engine set to {reader_engine}; browser concurrency {browser_concurrency}; image workers {image_download_workers}")
     repository.log(conn, "info", f"Auto Komga import/scan set to {'enabled' if komga_auto_enabled else 'disabled'}")
+    repository.log(conn, "info", f"Auto reorganize by chapters set to {'enabled' if reorganize_on_drain else 'disabled'}")
     return get_settings(_user)
 
 
 @app.post("/api/scan/library")
 def scan_local_library(_user: dict = Depends(authenticated_user)) -> dict:
     return scan_library(conn, settings.library_root)
+
+
+@app.post("/api/library/reorganize")
+def reorganize_library_endpoint(_user: dict = Depends(authenticated_user)) -> dict:
+    from .library_organizer import reorganize_library
+    if repository.unresolved_download_job_count(conn) > 0:
+        raise HTTPException(
+            status_code=409,
+            detail="downloads are currently running; reorganize after the queue clears",
+        )
+    result = reorganize_library(conn, settings.library_root, komga_client)
+    repository.log(conn, "info", f"Manual library reorganize: {result['moved']} moved, {result['skipped']} skipped")
+    return result
 
 
 @app.post("/api/scan/full")

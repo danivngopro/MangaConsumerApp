@@ -86,6 +86,7 @@ CREATE TABLE IF NOT EXISTS duplicate_candidates (
     remote_title TEXT NOT NULL,
     local_title TEXT NOT NULL,
     local_folder TEXT NOT NULL,
+    remote_folder TEXT,
     local_chapter_count INTEGER NOT NULL DEFAULT 0,
     remote_chapter_count INTEGER NOT NULL DEFAULT 0,
     score REAL NOT NULL,
@@ -178,6 +179,7 @@ def migrate_db(conn: sqlite3.Connection) -> None:
             remote_title TEXT NOT NULL,
             local_title TEXT NOT NULL,
             local_folder TEXT NOT NULL,
+            remote_folder TEXT,
             local_chapter_count INTEGER NOT NULL DEFAULT 0,
             remote_chapter_count INTEGER NOT NULL DEFAULT 0,
             score REAL NOT NULL,
@@ -193,6 +195,8 @@ def migrate_db(conn: sqlite3.Connection) -> None:
     duplicate_columns = {row["name"] for row in conn.execute("PRAGMA table_info(duplicate_candidates)").fetchall()}
     if "candidate_kind" not in duplicate_columns:
         conn.execute("ALTER TABLE duplicate_candidates ADD COLUMN candidate_kind TEXT NOT NULL DEFAULT 'remote_local'")
+    if "remote_folder" not in duplicate_columns:
+        conn.execute("ALTER TABLE duplicate_candidates ADD COLUMN remote_folder TEXT")
     duplicate_info = {row["name"]: row for row in conn.execute("PRAGMA table_info(duplicate_candidates)").fetchall()}
     if duplicate_info.get("remote_manga_id") and int(duplicate_info["remote_manga_id"]["notnull"]):
         conn.execute("ALTER TABLE duplicate_candidates RENAME TO duplicate_candidates_old")

@@ -92,9 +92,16 @@ export function DuplicatesPage({ loading, runAction }: SharedProps) {
     await refreshDuplicates();
   }
 
-  async function resolveLocalDup(candidate: DuplicateCandidate, status: "confirmed_exists" | "ignored") {
-    await runAction(`Resolve local duplicate: ${candidate.local_title}`, () =>
+  async function resolveLocalDup(candidate: DuplicateCandidate, status: "ignored") {
+    await runAction(`Ignore local duplicate: ${candidate.local_title}`, () =>
       api.resolveDuplicate(candidate.id, status),
+    );
+    await refreshDuplicates();
+  }
+
+  async function resolveLocalMain(candidate: DuplicateCandidate, mainFolder: string) {
+    await runAction(`Set main book for local duplicate: ${candidate.remote_title}`, () =>
+      api.resolveLocalMain(candidate.id, mainFolder),
     );
     await refreshDuplicates();
   }
@@ -167,7 +174,7 @@ export function DuplicatesPage({ loading, runAction }: SharedProps) {
             key={item.id}
             item={item}
             loading={loading}
-            onConfirm={() => resolveLocalDup(item, "confirmed_exists")}
+            onSetMain={(folder) => resolveLocalMain(item, folder)}
             onIgnore={() => resolveLocalDup(item, "ignored")}
           />
         ))}
@@ -324,15 +331,34 @@ function RemoteGroupCard({
 function LocalDupRow({
   item,
   loading,
-  onConfirm,
+  onSetMain,
   onIgnore,
 }: {
   item: DuplicateCandidate;
   loading: boolean;
-  onConfirm: () => void;
+  onSetMain: (folder: string) => void;
   onIgnore: () => void;
 }) {
+  const [selectedFolder, setSelectedFolder] = useState<string | null>(null);
   const score = Math.round(Number(item.score || 0) * 100);
+
+  // The two candidates: "keep" (remote_title/remote_folder) and "delete" (local_title/local_folder)
+  const books = [
+    {
+      title: item.remote_title,
+      folder: item.remote_folder,
+      chapters: item.remote_chapter_count,
+    },
+    {
+      title: item.local_title,
+      folder: item.local_folder,
+      chapters: item.local_chapter_count,
+    },
+  ];
+
+  const effectiveSelected = selectedFolder ?? item.remote_folder;
+  const canResolve = item.remote_folder != null; // can only pick main if we have both folders
+
   return (
     <div className={`download-item ${item.status === "pending" ? "active" : ""}`}>
       <div className="download-main" style={{ minWidth: 0 }}>
@@ -342,21 +368,79 @@ function LocalDupRow({
           <span className={`tag ${item.status === "pending" ? "tag-yellow" : "tag-purple"}`}>
             {item.status.replace(/_/g, " ")}
           </span>
+          <span className="muted" style={{ fontSize: "0.82em" }}>{score}% match</span>
         </div>
-        <div className="download-meta">
-          <span>Keep: {item.remote_title} ({item.remote_chapter_count} chapters)</span>
-          <span>Duplicate: {item.local_title} ({item.local_chapter_count} chapters)</span>
-          <span>{score}% match</span>
+
+        <div style={{ marginTop: 10, display: "flex", flexDirection: "column", gap: 6 }}>
+          {books.map((book) => {
+            if (!book.folder) return null;
+            const isSelected = effectiveSelected === book.folder;
+            return (
+              <label
+                key={book.folder}
+                style={{
+                  display: "flex",
+                  alignItems: "flex-start",
+                  gap: 10,
+                  padding: "8px 10px",
+                  borderRadius: 6,
+                  border: `1px solid ${isSelected ? "var(--accent)" : "var(--border)"}`,
+                  background: isSelected ? "var(--accent-dim, rgba(139,92,246,0.08))" : "transparent",
+                  cursor: item.status === "pending" ? "pointer" : "default",
+                }}
+                onClick={() => { if (item.status === "pending") setSelectedFolder(book.folder); }}
+              >
+                {item.status === "pending" && (
+                  <input
+                    type="radio"
+                    name={`local-dup-${item.id}`}
+                    checked={isSelected}
+                    onChange={() => setSelectedFolder(book.folder)}
+                    style={{ marginTop: 2, flexShrink: 0 }}
+                  />
+                )}
+                <div style={{ minWidth: 0 }}>
+                  <div style={{ fontWeight: 500 }}>{book.title}</div>
+                  <div className="muted" style={{ marginTop: 2 }}>{book.chapters} chapters</div>
+                  <div className="muted" style={{ overflowWrap: "anywhere", marginTop: 2 }}>{book.folder}</div>
+                </div>
+              </label>
+            );
+          })}
         </div>
-        <div className="muted" style={{ marginTop: 6, overflowWrap: "anywhere" }}>{item.local_folder}</div>
-        <div className="muted" style={{ marginTop: 4 }}>{item.reason}</div>
+
+        {item.status === "pending" && canResolve && effectiveSelected && (() => {
+          const other = books.find((b) => b.folder !== effectiveSelected);
+          const main = books.find((b) => b.folder === effectiveSelected);
+          if (other && main && other.chapters > main.chapters) {
+            return (
+              <div className="muted" style={{ marginTop: 8, fontSize: "0.82em" }}>
+                {other.chapters - main.chapters} chapters will be transferred from "{other.title}" before deleting.
+              </div>
+            );
+          }
+          return null;
+        })()}
+
+        <div className="muted" style={{ marginTop: 6 }}>{item.reason}</div>
       </div>
+
       <div className="modal-actions" style={{ justifyContent: "flex-end" }}>
         {item.status === "pending" && (
           <>
-            <button className="btn-primary btn-sm" onClick={onConfirm} disabled={loading}>
-              <Check size={12} /> Confirm
-            </button>
+            {canResolve ? (
+              <button
+                className="btn-primary btn-sm"
+                onClick={() => effectiveSelected && onSetMain(effectiveSelected)}
+                disabled={loading || !effectiveSelected}
+              >
+                <Check size={12} /> Set as main
+              </button>
+            ) : (
+              <button className="btn-primary btn-sm" onClick={() => onSetMain(item.local_folder)} disabled={loading}>
+                <Check size={12} /> Keep this
+              </button>
+            )}
             <button className="btn-ghost btn-sm" onClick={onIgnore} disabled={loading}>
               Ignore
             </button>

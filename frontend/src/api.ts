@@ -12,6 +12,7 @@ export type Summary = {
   limitedScanActive: boolean;
   scanRunning: boolean;
   komgaAutoEnabled: boolean;
+  reorganizeOnDrain: boolean;
   limitedScanActiveThreshold: number;
   libraryRoot: string;
   komgaUrl: string;
@@ -165,6 +166,7 @@ export type DuplicateCandidate = {
   candidate_kind: "remote_local" | "local_local";
   remote_manga_id: number | null;
   remote_title: string;
+  remote_folder: string | null;
   local_title: string;
   local_folder: string;
   local_chapter_count: number;
@@ -280,6 +282,11 @@ export const api = {
       `/api/duplicates/${candidateId}/local`,
       { method: "DELETE" },
     ),
+  resolveLocalMain: (candidateId: number, mainFolder: string) =>
+    request<{ deleted: string | null; transferred: number; mainFolder: string }>(
+      `/api/duplicates/${candidateId}/resolve-local-main`,
+      { method: "POST", body: JSON.stringify({ main_folder: mainFolder }) },
+    ),
   resolveGroupMain: (remoteMangaId: number, mainFolder: string) =>
     request<{ confirmed: number; deleted: number; transferred: number; enqueued: number }>(
       "/api/duplicates/group/resolve-main",
@@ -369,6 +376,7 @@ export const api = {
     imageDownloadWorkers: number,
     readerEngine: "playwright" | "selenium",
     komgaAutoEnabled: boolean,
+    reorganizeOnDrain: boolean,
   ) =>
     request<Summary>("/api/settings", {
       method: "POST",
@@ -379,8 +387,14 @@ export const api = {
         imageDownloadWorkers,
         readerEngine,
         komgaAutoEnabled,
+        reorganizeOnDrain,
       }),
     }),
+  reorganizeLibrary: () =>
+    request<{ moved: number; skipped: number; errors: string[]; komgaCreated: number; komgaScanned: number }>(
+      "/api/library/reorganize",
+      { method: "POST" },
+    ),
   pauseQueue: () =>
     request<{ queuePaused: boolean }>("/api/queue/pause", { method: "POST" }),
   resumeQueue: () =>

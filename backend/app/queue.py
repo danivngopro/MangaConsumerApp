@@ -207,6 +207,16 @@ class DownloadQueue:
                 time.sleep(self._komga_post_download_delay_seconds)
             count = self.komga_client.quick_scan_all()
             repository.log(self.conn, "info", f"Auto Komga quick scan all complete with deep=false: {count}")
+
+            reorganize_enabled = repository.get_setting(self.conn, "reorganize_on_drain", "0") == "1"
+            if reorganize_enabled:
+                from .library_organizer import reorganize_library
+                reorg = reorganize_library(self.conn, self.library_root, self.komga_client)
+                repository.log(
+                    self.conn,
+                    "info",
+                    f"Auto reorganize by chapters: {reorg['moved']} moved, {reorg['skipped']} skipped",
+                )
         except Exception as exc:
             repository.log(self.conn, "error", f"Auto Komga post-queue batch failed: {exc}")
 
