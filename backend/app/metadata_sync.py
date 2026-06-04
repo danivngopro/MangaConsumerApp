@@ -122,11 +122,17 @@ def sync_manga_metadata_to_komga(conn: sqlite3.Connection, komga_client, manga_i
 
         # Strategy 1: find by actual folder name (handles per-book AND range libraries)
         if folder_name:
-            series = komga_client.find_series_for_book(folder_name)
+            try:
+                series = komga_client.find_series_for_book(folder_name)
+            except Exception:
+                series = None
 
         # Strategy 2: find by local title if different from folder name
         if not series and local_title and local_title != folder_name:
-            series = komga_client.find_series_for_book(local_title)
+            try:
+                series = komga_client.find_series_for_book(local_title)
+            except Exception:
+                series = None
 
         # Strategy 3: global title search (works after range reorganization)
         if not series and local_title:

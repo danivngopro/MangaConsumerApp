@@ -1,6 +1,8 @@
 import sqlite3
 import unittest
 
+import requests
+
 from backend.app import repository
 from backend.app.asura import AsuraSeries
 from backend.app.database import init_db
@@ -20,6 +22,19 @@ class FakeKomgaClient:
 
     def update_series_metadata(self, series_id: str, payload: dict) -> None:
         self.payloads.append((series_id, payload))
+
+
+class FallbackKomgaClient(FakeKomgaClient):
+    def find_series_for_book(self, local_title: str) -> dict | None:
+        response = requests.Response()
+        response.status_code = 405
+        response.url = "http://komga.test/api/v1/series/list?unpaged=true"
+        raise requests.HTTPError("405 Client Error", response=response)
+
+    def find_series_by_title(self, title: str) -> dict | None:
+        if title == "Murim Login":
+            return {"id": "series-by-title", "name": "Murim Login"}
+        return None
 
 
 class MetadataSyncTests(unittest.TestCase):
@@ -146,6 +161,29 @@ class MetadataSyncTests(unittest.TestCase):
         self.assertEqual(result["synced"], True)
         self.assertEqual(client.payloads[0][0], "series-1")
         self.assertEqual(client.payloads[0][1]["status"], "ENDED")
+
+    def test_metadata_sync_falls_back_to_title_search_when_library_series_list_is_not_supported(self):
+        manga_id = repository.upsert_manga(
+            self.conn,
+            {
+                "slug": "murim-login",
+                "title": "Murim Login",
+                "url": "https://asurascans.com/comics/murim-login",
+                "status": "completed",
+                "remote_chapter_count": 100,
+                "type": "manhwa",
+                "genres": [{"name": "Action"}],
+            },
+        )
+        repository.set_manga_download_override(self.conn, manga_id, "/books/Murim Login", "Murim Login")
+        client = FallbackKomgaClient()
+
+        result = sync_manga_metadata_to_komga(self.conn, client, manga_id)
+
+        self.assertEqual(result["synced"], True)
+        self.assertEqual(client.payloads[0][0], "series-by-title")
+        row = repository.get_manga_detail(self.conn, manga_id)
+        self.assertIsNone(row["metadata_last_error"])
 
 
 if __name__ == "__main__":
