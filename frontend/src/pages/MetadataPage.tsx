@@ -17,9 +17,17 @@ export function MetadataPage({ loading, runAction }: SharedProps) {
     refreshMetadata().catch(() => {});
   }, []);
 
+  function needsAsuraMetadata(item: MetadataCandidate) {
+    return (
+      !item.asura_description ||
+      !item.asura_type ||
+      !item.asura_genres ||
+      item.asura_genres.length === 0
+    );
+  }
+
   async function syncAll() {
-    const candidates = items.filter((item) => !item.metadata_synced_at || item.metadata_last_error);
-    const targets = candidates.length ? candidates : items;
+    const targets = items.filter((item) => !item.metadata_synced_at || item.metadata_last_error || needsAsuraMetadata(item));
     setSyncProgress({ current: 0, total: targets.length, title: "Starting" });
     try {
       for (let index = 0; index < targets.length; index += 1) {
@@ -42,6 +50,7 @@ export function MetadataPage({ loading, runAction }: SharedProps) {
   const synced = items.filter((item) => item.metadata_synced_at && !item.metadata_last_error).length;
   const errors = items.filter((item) => item.metadata_last_error).length;
   const unsynced = items.filter((item) => !item.metadata_synced_at && !item.metadata_last_error).length;
+  const asuraIncomplete = items.filter(needsAsuraMetadata).length;
   const filtered = items.filter((item) => {
     if (filter === "synced") return Boolean(item.metadata_synced_at && !item.metadata_last_error);
     if (filter === "error") return Boolean(item.metadata_last_error);
@@ -70,12 +79,13 @@ export function MetadataPage({ loading, runAction }: SharedProps) {
         <StatCard label="Unsynced" value={`${unsynced}`} />
         <StatCard label="Synced" value={`${synced}`} />
         <StatCard label="Errors / review" value={`${errors}`} />
+        <StatCard label="Asura gaps" value={`${asuraIncomplete}`} />
       </div>
 
       <div className="status-bar" style={{ marginBottom: 14, alignItems: "flex-start" }}>
         <span className="status-dot" style={{ marginTop: 7 }} />
         <span>
-          Sync verified uses books already found by local library scan or confirmed duplicate matching, refreshes available Asura metadata including descriptions, then updates the matched Komga series. Run a library scan first if new local folders are missing here.
+          Sync verified uses books already found by local library scan or confirmed duplicate matching, stores Asura metadata locally for Browse, then updates the matched Komga series. It also revisits already-synced rows when description, genres, or type are missing.
         </span>
       </div>
 

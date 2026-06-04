@@ -240,6 +240,7 @@ export type MetadataCandidate = Book & {
   asura_artist: string | null;
   asura_genres: Array<{ name?: string; slug?: string } | string>;
   asura_rating: number | null;
+  asura_description: string | null;
   asura_last_chapter_at: string | null;
   komga_series_id: string | null;
   metadata_synced_at: string | null;
