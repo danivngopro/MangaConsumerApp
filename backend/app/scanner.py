@@ -463,6 +463,27 @@ def _handle_duplicate_candidate(
         if inv:
             repository.set_manga_download_override(conn, manga_id, inv["folder_path"], inv["title"])
 
+    # Auto-confirm a single 100% match that is still pending (same normalized title, different format)
+    if (
+        len(matches) == 1
+        and matches[0]["title"] != remote_title
+        and float(matches[0].get("score", 0)) >= 1.0
+        and last_status == "pending"
+    ):
+        now = repository.utc_now()
+        conn.execute(
+            """
+            UPDATE duplicate_candidates
+            SET status = 'confirmed_exists', resolved_at = ?, updated_at = ?
+            WHERE candidate_kind = 'remote_local' AND remote_manga_id = ? AND local_folder = ?
+            """,
+            (now, now, manga_id, matches[0]["folder_path"]),
+        )
+        conn.commit()
+        repository.set_manga_download_override(conn, manga_id, matches[0]["folder_path"], matches[0]["title"])
+        repository.log(conn, "info", f"Auto-confirmed 100% match: '{remote_title}' → '{matches[0]['title']}'")
+        return "confirmed_exists"
+
     return last_status
 
 

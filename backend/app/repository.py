@@ -254,6 +254,11 @@ def clear_inventory(conn: sqlite3.Connection) -> None:
     conn.commit()
 
 
+def remove_inventory_entry(conn: sqlite3.Connection, title: str) -> None:
+    conn.execute("DELETE FROM local_inventory WHERE normalized_title = ?", (normalize_title(title),))
+    conn.commit()
+
+
 def get_inventory_map(conn: sqlite3.Connection) -> dict[str, dict]:
     rows = conn.execute("SELECT * FROM local_inventory").fetchall()
     result: dict[str, dict] = {}

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import re
+import shutil
 import sqlite3
 from pathlib import Path
 
@@ -22,6 +23,19 @@ def extract_chapter_key(filename: str) -> str:
         if match:
             return chapter_key(match.group(1))
     return ""
+
+
+def _preferred_by_asura(conn: sqlite3.Connection, a: dict, b: dict) -> tuple[dict, dict]:
+    """Return (keep, delete) preferring the folder whose title matches an Asura manga entry."""
+    a_manga = conn.execute(
+        "SELECT id FROM manga WHERE normalized_title = ?", (normalize_title(a["title"]),)
+    ).fetchone()
+    b_manga = conn.execute(
+        "SELECT id FROM manga WHERE normalized_title = ?", (normalize_title(b["title"]),)
+    ).fetchone()
+    if b_manga and not a_manga:
+        return b, a
+    return a, b
 
 
 def scan_library(conn: sqlite3.Connection, library_root: Path) -> dict:
@@ -67,14 +81,39 @@ def scan_library(conn: sqlite3.Connection, library_root: Path) -> dict:
         book_count += 1
         chapter_count += len(set(chapters))
 
+    auto_resolved = 0
     for index, left in enumerate(scanned_items):
         for right in scanned_items[index + 1:]:
             score, reason = title_similarity(left["title"], right["title"])
             if score < 0.82:
                 continue
+
             keep, delete = left, right
             if int(right["chapter_count"]) > int(left["chapter_count"]):
                 keep, delete = right, left
+
+            if score >= 1.0:
+                # 100% match — prefer the Asura-named folder, then auto-resolve without user action
+                keep, delete = _preferred_by_asura(conn, keep, delete)
+                keep_path = Path(keep["folder_path"])
+                delete_path = Path(delete["folder_path"])
+                transferred = 0
+                if delete_path.exists() and keep_path.exists():
+                    transferred = transfer_chapters(delete_path, keep_path)
+                    shutil.rmtree(delete_path, ignore_errors=True)
+                elif delete_path.exists():
+                    shutil.rmtree(delete_path, ignore_errors=True)
+                # Remove the deleted folder from the inventory
+                repository.remove_inventory_entry(conn, delete["title"])
+                auto_resolved += 1
+                repository.log(
+                    conn,
+                    "info",
+                    f"Auto-resolved 100% local dup: kept '{keep['title']}', "
+                    f"deleted '{delete['title']}', transferred {transferred} ch",
+                )
+                continue
+
             repository.upsert_local_duplicate_candidate(
                 conn,
                 keep["title"],
@@ -90,7 +129,8 @@ def scan_library(conn: sqlite3.Connection, library_root: Path) -> dict:
     repository.log(
         conn,
         "info",
-        f"Indexed local library at {library_root}: {book_count}/{folders_seen} folders with comics, {chapter_count} chapters from {comic_files_seen} files",
+        f"Indexed local library at {library_root}: {book_count}/{folders_seen} folders with comics, "
+        f"{chapter_count} chapters from {comic_files_seen} files, {auto_resolved} auto-resolved 100% dups",
     )
     return {
         "books": book_count,
@@ -99,6 +139,7 @@ def scan_library(conn: sqlite3.Connection, library_root: Path) -> dict:
         "root": str(library_root),
         "foldersSeen": folders_seen,
         "comicFilesSeen": comic_files_seen,
+        "autoResolved": auto_resolved,
     }
 
 
@@ -111,14 +152,12 @@ def transfer_chapters(from_folder: Path, to_folder: Path) -> int:
             if key:
                 existing_keys.add(key)
 
-    import shutil as _shutil
-
     copied = 0
     for f in sorted(from_folder.rglob("*")):
         if f.is_file() and f.suffix.lower() in COMIC_EXTENSIONS:
             key = extract_chapter_key(f.name)
             if key and key not in existing_keys:
-                _shutil.copy2(f, to_folder / f.name)
+                shutil.copy2(f, to_folder / f.name)
                 existing_keys.add(key)
                 copied += 1
     return copied

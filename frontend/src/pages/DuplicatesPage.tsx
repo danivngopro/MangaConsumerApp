@@ -343,20 +343,23 @@ function LocalDupRow({
   const score = Math.round(Number(item.score || 0) * 100);
 
   // The two candidates: "keep" (remote_title/remote_folder) and "delete" (local_title/local_folder)
+  // remote_folder may be null for candidates created before the migration — show a fallback label
   const books = [
     {
       title: item.remote_title,
       folder: item.remote_folder,
       chapters: item.remote_chapter_count,
+      folderMissing: item.remote_folder == null,
     },
     {
       title: item.local_title,
       folder: item.local_folder,
       chapters: item.local_chapter_count,
+      folderMissing: false,
     },
   ];
 
-  const effectiveSelected = selectedFolder ?? item.remote_folder;
+  const effectiveSelected = selectedFolder ?? (item.remote_folder ?? item.local_folder);
   const canResolve = item.remote_folder != null; // can only pick main if we have both folders
 
   return (
@@ -372,9 +375,14 @@ function LocalDupRow({
         </div>
 
         <div style={{ marginTop: 10, display: "flex", flexDirection: "column", gap: 6 }}>
-          {books.map((book) => {
-            if (!book.folder) return null;
-            const isSelected = effectiveSelected === book.folder;
+          {item.remote_folder == null && item.status === "pending" && (
+          <div className="muted" style={{ marginTop: 6, fontSize: "0.82em" }}>
+            Run "Scan local duplicates" to load both folder paths and enable picking a main book.
+          </div>
+        )}
+        {books.map((book) => {
+            const bookFolder = book.folder ?? `__missing__${book.title}`;
+            const isSelected = effectiveSelected === bookFolder || effectiveSelected === book.folder;
             return (
               <label
                 key={book.folder}
@@ -388,21 +396,24 @@ function LocalDupRow({
                   background: isSelected ? "var(--accent-dim, rgba(139,92,246,0.08))" : "transparent",
                   cursor: item.status === "pending" ? "pointer" : "default",
                 }}
-                onClick={() => { if (item.status === "pending") setSelectedFolder(book.folder); }}
+                onClick={() => { if (item.status === "pending" && book.folder) setSelectedFolder(book.folder); }}
               >
                 {item.status === "pending" && (
                   <input
                     type="radio"
                     name={`local-dup-${item.id}`}
                     checked={isSelected}
-                    onChange={() => setSelectedFolder(book.folder)}
+                    onChange={() => book.folder && setSelectedFolder(book.folder)}
+                    disabled={book.folderMissing}
                     style={{ marginTop: 2, flexShrink: 0 }}
                   />
                 )}
                 <div style={{ minWidth: 0 }}>
                   <div style={{ fontWeight: 500 }}>{book.title}</div>
                   <div className="muted" style={{ marginTop: 2 }}>{book.chapters} chapters</div>
-                  <div className="muted" style={{ overflowWrap: "anywhere", marginTop: 2 }}>{book.folder}</div>
+                  <div className="muted" style={{ overflowWrap: "anywhere", marginTop: 2 }}>
+                    {book.folderMissing ? <em>folder path unknown — re-scan to load</em> : book.folder}
+                  </div>
                 </div>
               </label>
             );
