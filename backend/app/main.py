@@ -6,7 +6,8 @@ from pathlib import Path
 import shutil
 
 import psutil
-from fastapi import Cookie, Depends, FastAPI, HTTPException, Response
+from fastapi import Cookie, Depends, FastAPI, HTTPException, Request, Response
+from fastapi.responses import FileResponse
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
@@ -963,4 +964,9 @@ def quick_scan_all_books(_user: dict = Depends(authenticated_user)) -> dict:
 
 frontend_dist = Path(__file__).resolve().parents[2] / "frontend" / "dist"
 if frontend_dist.exists():
-    app.mount("/", StaticFiles(directory=frontend_dist, html=True), name="frontend")
+    @app.get("/{full_path:path}", include_in_schema=False)
+    async def spa_catchall(_request: Request, full_path: str) -> FileResponse:
+        candidate = frontend_dist / full_path
+        if candidate.is_file():
+            return FileResponse(candidate)
+        return FileResponse(frontend_dist / "index.html")

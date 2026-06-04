@@ -52,3 +52,14 @@ def best_title_match(remote_title: str, inventory_items: Iterable[dict], thresho
         if best is None or candidate["score"] > best["score"]:
             best = candidate
     return best
+
+
+def all_title_matches(remote_title: str, inventory_items: Iterable[dict], threshold: float = 0.72) -> list[dict]:
+    """Return every inventory item with similarity >= threshold, sorted by score desc."""
+    results = []
+    for item in inventory_items:
+        score, reason = title_similarity(remote_title, item["title"])
+        if score >= threshold:
+            results.append({**item, "score": score, "reason": reason})
+    results.sort(key=lambda x: float(x["score"]), reverse=True)
+    return results

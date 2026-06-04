@@ -4,7 +4,7 @@ import sqlite3
 from collections.abc import Callable
 
 from .asura import AsuraClient, AsuraSeries
-from .duplicates import best_title_match
+from .duplicates import all_title_matches, best_title_match
 from .library import local_match_for_title, scan_library
 from . import repository
 
@@ -228,15 +228,7 @@ def scan_one_series(
         [{"number": ch.number, "label": ch.label, "url": ch.url} for ch in chapters],
     )
 
-    local = local_match_for_title(inventory, series.title)
-    duplicate_match = local or best_title_match(series.title, inventory.values())
-    if duplicate_match and duplicate_match["title"] == series.title:
-        duplicate_match = None
-    if duplicate_match:
-        existing_candidate = repository.get_duplicate_candidate_for_manga(conn, manga_id, duplicate_match["folder_path"])
-        if existing_candidate and existing_candidate.get("status") == "confirmed_exists":
-            local = duplicate_match
-            repository.set_manga_download_override(conn, manga_id, local["folder_path"], local["title"])
+    local = _resolve_local_for_manga(conn, manga_id, series.title, inventory)
     local_keys = local["chapters"] if local else set()
     missing = repository.find_missing_chapters(conn, manga_id, local_keys)
     duplicate_status = None
@@ -247,7 +239,7 @@ def scan_one_series(
             series.title,
             len(chapters),
             inventory,
-            duplicate_match,
+            exact_local=local,
         )
         if duplicate_status == "pending":
             repository.update_manga_scan_counts(
@@ -340,15 +332,7 @@ def scan_one_series_deferred(
         [{"number": ch.number, "label": ch.label, "url": ch.url} for ch in chapters],
     )
 
-    local = local_match_for_title(inventory, series.title)
-    duplicate_match = local or best_title_match(series.title, inventory.values())
-    if duplicate_match and duplicate_match["title"] == series.title:
-        duplicate_match = None
-    if duplicate_match:
-        existing_candidate = repository.get_duplicate_candidate_for_manga(conn, manga_id, duplicate_match["folder_path"])
-        if existing_candidate and existing_candidate.get("status") == "confirmed_exists":
-            local = duplicate_match
-            repository.set_manga_download_override(conn, manga_id, local["folder_path"], local["title"])
+    local = _resolve_local_for_manga(conn, manga_id, series.title, inventory)
     local_keys = local["chapters"] if local else set()
     missing = repository.find_missing_chapters(conn, manga_id, local_keys)
     duplicate_status = None
@@ -359,7 +343,7 @@ def scan_one_series_deferred(
             series.title,
             len(chapters),
             inventory,
-            duplicate_match,
+            exact_local=local,
         )
         if duplicate_status == "pending":
             repository.update_manga_scan_counts(
@@ -399,34 +383,87 @@ def scan_one_series_deferred(
     }
 
 
+def _resolve_local_for_manga(
+    conn: sqlite3.Connection,
+    manga_id: int,
+    remote_title: str,
+    inventory: dict[str, dict],
+) -> dict | None:
+    """
+    Return the inventory item to use as the local folder for this manga.
+    Priority: confirmed_exists candidate → exact local match → None.
+    Also re-applies download_folder_override when a confirmed candidate exists.
+    """
+    confirmed = conn.execute(
+        """
+        SELECT * FROM duplicate_candidates
+        WHERE candidate_kind = 'remote_local'
+          AND remote_manga_id = ?
+          AND status = 'confirmed_exists'
+        LIMIT 1
+        """,
+        (manga_id,),
+    ).fetchone()
+    if confirmed:
+        inv = next((item for item in inventory.values() if item["folder_path"] == confirmed["local_folder"]), None)
+        if inv:
+            repository.set_manga_download_override(conn, manga_id, inv["folder_path"], inv["title"])
+            return inv
+
+    return local_match_for_title(inventory, remote_title)
+
+
 def _handle_duplicate_candidate(
     conn: sqlite3.Connection,
     manga_id: int,
     remote_title: str,
     remote_chapter_count: int,
     inventory: dict[str, dict],
-    local: dict | None,
+    exact_local: dict | None = None,
 ) -> str | None:
-    match = local or best_title_match(remote_title, inventory.values())
-    if not match:
+    # Gather ALL local items that match this remote title above threshold
+    matches = all_title_matches(remote_title, inventory.values())
+
+    # Ensure the exact local (found via local_match_for_title) is in the list even if
+    # its folder name produces the same normalized key (score 1.0 but different string)
+    if exact_local and not any(m["folder_path"] == exact_local["folder_path"] for m in matches):
+        matches.insert(0, {**exact_local, "score": 1.0, "reason": "same normalized title"})
+
+    if not matches:
         return None
-    if match["title"] == remote_title:
+
+    # If every match has the same title string as remote (all exact) → no duplicate needed
+    if all(m["title"] == remote_title for m in matches):
         return None
-    candidate = repository.upsert_duplicate_candidate(
-        conn,
-        manga_id,
-        remote_title,
-        match["title"],
-        match["folder_path"],
-        int(match["chapter_count"]),
-        remote_chapter_count,
-        float(match.get("score", 1.0)),
-        str(match.get("reason", "local title match")),
-    )
-    status = candidate.get("status")
-    if status == "confirmed_exists":
-        repository.set_manga_download_override(conn, manga_id, match["folder_path"], match["title"])
-    return status
+
+    # Create a candidate for each match so the user can see all options and pick
+    last_status: str | None = None
+    confirmed_folder: str | None = None
+    for match in matches:
+        candidate = repository.upsert_duplicate_candidate(
+            conn,
+            manga_id,
+            remote_title,
+            match["title"],
+            match["folder_path"],
+            int(match.get("chapter_count", len(match.get("chapters", [])))),
+            remote_chapter_count,
+            float(match.get("score", 1.0)),
+            str(match.get("reason", "local title match")),
+        )
+        status = candidate.get("status")
+        if status == "confirmed_exists":
+            confirmed_folder = match["folder_path"]
+            last_status = "confirmed_exists"
+        elif last_status != "confirmed_exists":
+            last_status = status or "pending"
+
+    if confirmed_folder:
+        inv = next((m for m in matches if m["folder_path"] == confirmed_folder), None)
+        if inv:
+            repository.set_manga_download_override(conn, manga_id, inv["folder_path"], inv["title"])
+
+    return last_status
 
 
 def scan_priority_books(

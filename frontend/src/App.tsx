@@ -1,4 +1,5 @@
 import { FormEvent, useEffect, useRef, useState } from "react";
+import { useNavigate, useLocation } from "react-router-dom";
 import {
   Download,
   LayoutDashboard,
@@ -28,6 +29,13 @@ import { SearchPage } from "./pages/SearchPage";
 import { SettingsPage } from "./pages/SettingsPage";
 
 type Tab = "dashboard" | "downloads" | "duplicates" | "metadata" | "search" | "settings";
+
+const VALID_TABS: Tab[] = ["dashboard", "downloads", "duplicates", "metadata", "search", "settings"];
+
+function tabFromPath(pathname: string): Tab {
+  const seg = pathname.replace(/^\//, "").split("/")[0];
+  return VALID_TABS.includes(seg as Tab) ? (seg as Tab) : "dashboard";
+}
 
 const emptySummary: Summary = {
   knownManga: 0,
@@ -75,7 +83,9 @@ export function App() {
   const [browseFilters, setBrowseFilters] = useState<BrowseFilters | null>(null);
   const [loading, setLoading] = useState(false);
   const [status, setStatus] = useState("Ready");
-  const [activeTab, setActiveTab] = useState<Tab>("dashboard");
+  const navigate = useNavigate();
+  const { pathname } = useLocation();
+  const activeTab = tabFromPath(pathname);
 
   const browseFiltersRef = useRef(browseFilters);
   browseFiltersRef.current = browseFilters;
@@ -144,6 +154,10 @@ export function App() {
     return () => clearInterval(h);
   }, []); // eslint-disable-line react-hooks/exhaustive-deps
 
+  function go(tab: Tab) {
+    navigate("/" + tab);
+  }
+
   if (!authStatus) {
     return (
       <div style={{ minHeight: "100dvh", display: "grid", placeItems: "center", color: "var(--text-2)" }}>
@@ -193,7 +207,7 @@ export function App() {
             <button
               key={tab.id}
               className={`nav-item${activeTab === tab.id ? " active" : ""}`}
-              onClick={() => setActiveTab(tab.id)}
+              onClick={() => go(tab.id)}
             >
               <span className="icon">{tab.icon}</span>
               {tab.label}
@@ -288,7 +302,7 @@ export function App() {
             <button
               key={tab.id}
               className={`btm-nav-item${activeTab === tab.id ? " active" : ""}`}
-              onClick={() => setActiveTab(tab.id)}
+              onClick={() => go(tab.id)}
             >
               {tab.icon}
               {tab.label}
