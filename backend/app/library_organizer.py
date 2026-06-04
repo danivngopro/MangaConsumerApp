@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import shutil
 import sqlite3
+import threading
 import time
 from pathlib import Path
 
@@ -33,10 +34,72 @@ def get_range_name(chapter_count: int) -> str:
     return "500+ Chapters"
 
 
+def cleanup_per_book_libraries(
+    conn: sqlite3.Connection,
+    library_root: Path,
+    komga_client,
+) -> dict:
+    """Delete all per-book Komga libraries and ensure range libraries are created and scanned."""
+    if not komga_client.enabled:
+        return {"error": "Komga not configured", "deleted": 0, "komgaCreated": 0, "komgaScanned": 0, "errors": []}
+
+    try:
+        libraries = komga_client.list_libraries()
+    except Exception as exc:
+        return {"error": f"Could not list Komga libraries: {exc}", "deleted": 0, "komgaCreated": 0, "komgaScanned": 0, "errors": []}
+
+    books_root = komga_client.settings.books_root_docker.rstrip("/")
+    range_roots = {f"{books_root}/{sanitize_filename(name)}" for _, _, name in CHAPTER_RANGES}
+
+    deleted = 0
+    errors: list[str] = []
+
+    for lib in libraries:
+        lib_root = (lib.get("root") or "").rstrip("/")
+        if lib_root in range_roots:
+            continue
+        prefix = books_root + "/"
+        if not lib_root.startswith(prefix):
+            continue
+        relative = lib_root[len(prefix):]
+        if "/" in relative:
+            continue
+        try:
+            resp = komga_client.session.delete(f"{komga_client.libraries_url}/{lib['id']}", timeout=30)
+            resp.raise_for_status()
+            deleted += 1
+            repository.log(conn, "info", f"Cleanup: deleted per-book library '{lib.get('name')}'")
+        except Exception as exc:
+            errors.append(f"{lib.get('name')}: {exc}")
+
+    komga_created = 0
+    komga_scanned = 0
+    for _, _, range_name in CHAPTER_RANGES:
+        range_dir = library_root / range_name
+        if not range_dir.exists():
+            continue
+        try:
+            library, created = komga_client.ensure_library_for_book(range_name)
+            if created:
+                komga_created += 1
+                time.sleep(1)
+            komga_client.quick_scan_library(str(library["id"]))
+            komga_scanned += 1
+        except Exception as exc:
+            errors.append(f"{range_name}: {exc}")
+
+    repository.log(
+        conn, "info",
+        f"Komga cleanup: {deleted} per-book libraries deleted, {komga_scanned} range libraries scanned",
+    )
+    return {"deleted": deleted, "komgaCreated": komga_created, "komgaScanned": komga_scanned, "errors": errors}
+
+
 def reorganize_library(
     conn: sqlite3.Connection,
     library_root: Path,
     komga_client,
+    stop_event: threading.Event | None = None,
 ) -> dict:
     if not library_root.exists():
         return {
@@ -47,7 +110,7 @@ def reorganize_library(
             "errors": [],
         }
 
-    # Books with active downloads are skipped (not blocked — just left in place this run)
+    # Books with active downloads are left in place this run
     active_manga_ids: set[int] = {
         int(row["manga_id"])
         for row in conn.execute(
@@ -71,9 +134,13 @@ def reorganize_library(
     moved = 0
     skipped = 0
     skipped_active = 0
+    komga_libs_deleted = 0
     errors: list[str] = []
 
     for row in manga_rows:
+        if stop_event and stop_event.is_set():
+            break
+
         if int(row["id"]) in active_manga_ids:
             skipped_active += 1
             continue
@@ -96,6 +163,7 @@ def reorganize_library(
                 skipped += 1
                 continue
         else:
+            # Outside library_root structure — skip
             skipped += 1
             continue
 
@@ -109,6 +177,31 @@ def reorganize_library(
             skipped += 1
             continue
 
+        # Delete the per-book Komga library BEFORE moving so Komga removes it cleanly
+        # (moving the folder first would leave Komga with a broken/orphaned entry)
+        if komga_client.enabled:
+            try:
+                deleted = komga_client.delete_library_for_book(book_name)
+                if deleted:
+                    komga_libs_deleted += 1
+                    # Clear stale Komga references from DB
+                    conn.execute(
+                        """
+                        UPDATE manga
+                        SET komga_library_id = NULL,
+                            komga_series_id   = NULL,
+                            komga_imported_at = NULL,
+                            komga_scanned_at  = NULL,
+                            updated_at        = ?
+                        WHERE id = ?
+                        """,
+                        (repository.utc_now(), row["id"]),
+                    )
+                    conn.commit()
+            except Exception as exc:
+                repository.log(conn, "warning", f"Could not delete per-book library for '{book_name}': {exc}")
+
+        # Move the folder into the target range directory
         try:
             target.parent.mkdir(parents=True, exist_ok=True)
             shutil.move(str(current), str(target))
@@ -131,25 +224,14 @@ def reorganize_library(
             errors.append(f"{book_name}: {exc}")
             repository.log(conn, "error", f"Reorganize failed for '{book_name}': {exc}")
 
-    # ── Komga: import unregistered books + create/scan range libraries ──────────
+    stopped_early = stop_event is not None and stop_event.is_set()
+
+    # Create/update range Komga libraries and scan them (skip if stopped early)
     komga_created = 0
     komga_scanned = 0
-    komga_imported = 0
     komga_errors: list[str] = []
 
-    if komga_client.enabled:
-        # Import any books still at root level that aren't yet in any range dir
-        # (e.g. skipped-active books, or books outside the DB)
-        for entry in sorted(library_root.iterdir()):
-            if not entry.is_dir() or entry.name in RANGE_NAMES:
-                continue
-            try:
-                komga_client.ensure_library_for_book(entry.name)
-                komga_imported += 1
-            except Exception as exc:
-                komga_errors.append(f"import {entry.name}: {exc}")
-
-        # Create/update range libraries and scan each one
+    if komga_client.enabled and not stopped_early:
         for _, _, range_name in CHAPTER_RANGES:
             range_dir = library_root / range_name
             if not range_dir.exists():
@@ -164,58 +246,20 @@ def reorganize_library(
             except Exception as exc:
                 komga_errors.append(f"{range_name}: {exc}")
 
-        # Clean up per-book libraries whose folders were moved away
-        if moved > 0:
-            _delete_orphaned_per_book_libraries(conn, library_root, komga_client)
-
     repository.log(
         conn,
         "info",
         f"Library reorganization: {moved} moved, {skipped} skipped, "
-        f"{skipped_active} skipped (active download), {len(errors)} errors",
+        f"{skipped_active} skipped (active download), "
+        f"{komga_libs_deleted} per-book libraries deleted",
     )
     return {
         "moved": moved,
         "skipped": skipped,
         "skippedActive": skipped_active,
-        "errors": errors,
+        "komgaLibsDeleted": komga_libs_deleted,
         "komgaCreated": komga_created,
         "komgaScanned": komga_scanned,
-        "komgaImported": komga_imported,
+        "errors": errors,
         "komgaErrors": komga_errors,
     }
-
-
-def _delete_orphaned_per_book_libraries(
-    conn: sqlite3.Connection,
-    library_root: Path,
-    komga_client,
-) -> None:
-    """Delete Komga per-book libraries whose source folders no longer exist at the top level."""
-    try:
-        libraries = komga_client.list_libraries()
-        books_root = komga_client.settings.books_root_docker.rstrip("/")
-        range_roots = {f"{books_root}/{sanitize_filename(name)}" for _, _, name in CHAPTER_RANGES}
-
-        for lib in libraries:
-            lib_root = (lib.get("root") or "").rstrip("/")
-            if lib_root in range_roots:
-                continue
-            prefix = books_root + "/"
-            if not lib_root.startswith(prefix):
-                continue
-            relative = lib_root[len(prefix):]
-            if "/" in relative:
-                continue
-            host_folder = library_root / relative
-            if not host_folder.exists():
-                try:
-                    resp = komga_client.session.delete(
-                        f"{komga_client.libraries_url}/{lib['id']}", timeout=30
-                    )
-                    resp.raise_for_status()
-                    repository.log(conn, "info", f"Deleted orphaned per-book library: {lib.get('name')}")
-                except Exception as exc:
-                    repository.log(conn, "warning", f"Could not delete library '{lib.get('name')}': {exc}")
-    except Exception as exc:
-        repository.log(conn, "warning", f"Orphaned library cleanup failed: {exc}")

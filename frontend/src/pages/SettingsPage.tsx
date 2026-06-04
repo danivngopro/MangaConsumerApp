@@ -1,5 +1,5 @@
 import { FormEvent, useEffect, useState } from "react";
-import { FolderSync } from "lucide-react";
+import { FolderSync, Wrench, Square } from "lucide-react";
 import { api } from "../api";
 import { StatCard } from "../components/shared";
 import type { SharedProps } from "../App";
@@ -213,15 +213,31 @@ export function SettingsPage({ summary, loading, runAction }: SharedProps) {
               >
                 Retry failed
               </button>
+              {summary.reorganizeRunning ? (
+                <button
+                  className="btn-ghost btn-sm danger"
+                  onClick={() => runAction("Stop reorganize", api.reorganizeStop)}
+                  disabled={loading}
+                >
+                  <Square size={13} /> Stop reorganize
+                </button>
+              ) : (
+                <button
+                  className="btn-ghost btn-sm"
+                  title="Move each local book into its 0-50 / 50-100 / … / 500+ chapter-range Komga library"
+                  onClick={() => runAction("Reorganize by chapter count", api.reorganizeLibrary)}
+                  disabled={loading}
+                >
+                  <FolderSync size={13} /> Reorganize by chapters
+                </button>
+              )}
               <button
                 className="btn-ghost btn-sm"
-                title="Move each local book into its 0-50 / 50-100 / … / 500+ chapter-range Komga library"
-                onClick={() =>
-                  runAction("Reorganize by chapter count", api.reorganizeLibrary)
-                }
-                disabled={loading}
+                title="Delete all per-book Komga libraries and rescan range libraries — fixes a broken previous run"
+                onClick={() => runAction("Fix Komga libraries", api.komgaCleanup)}
+                disabled={loading || summary.reorganizeRunning}
               >
-                <FolderSync size={13} /> Reorganize by chapters
+                <Wrench size={13} /> Fix Komga libraries
               </button>
             </div>
           </div>

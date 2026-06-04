@@ -13,6 +13,7 @@ export type Summary = {
   scanRunning: boolean;
   komgaAutoEnabled: boolean;
   reorganizeOnDrain: boolean;
+  reorganizeRunning: boolean;
   limitedScanActiveThreshold: number;
   libraryRoot: string;
   komgaUrl: string;
@@ -391,8 +392,17 @@ export const api = {
       }),
     }),
   reorganizeLibrary: () =>
-    request<{ moved: number; skipped: number; errors: string[]; komgaCreated: number; komgaScanned: number }>(
+    request<{ started: boolean; running: boolean }>(
       "/api/library/reorganize",
+      { method: "POST" },
+    ),
+  reorganizeStop: () =>
+    request<{ stopped: boolean }>("/api/library/reorganize/stop", { method: "POST" }),
+  reorganizeStatus: () =>
+    request<{ running: boolean; result: Record<string, unknown> | null }>("/api/library/reorganize/status"),
+  komgaCleanup: () =>
+    request<{ deleted: number; komgaCreated: number; komgaScanned: number; errors: string[] }>(
+      "/api/library/komga-cleanup",
       { method: "POST" },
     ),
   pauseQueue: () =>

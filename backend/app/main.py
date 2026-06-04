@@ -153,6 +153,15 @@ download_queue = DownloadQueue(
 scan_scheduler = ScanScheduler(conn, asura_client, settings.library_root)
 scan_stop_event = threading.Event()
 
+_reorg_stop = threading.Event()
+_reorg_thread: threading.Thread | None = None
+_reorg_last_result: dict | None = None
+_reorg_lock = threading.Lock()
+
+
+def _reorg_running() -> bool:
+    return _reorg_thread is not None and _reorg_thread.is_alive()
+
 app = FastAPI(title="Manga Crawler")
 app.add_middleware(
     CORSMiddleware,
@@ -249,6 +258,7 @@ def summary(_user: dict = Depends(authenticated_user)) -> dict:
     data["readerEngine"] = download_queue.reader_engine
     data["limitedScanActive"] = repository.get_setting(conn, "limited_scan_active", "0") == "1"
     data["scanRunning"] = scan_scheduler.scan_running
+    data["reorganizeRunning"] = _reorg_running()
     data["limitedScanActiveThreshold"] = int(repository.get_setting(conn, "limited_scan_active_threshold", "300") or "300")
     return data
 
@@ -637,6 +647,7 @@ def get_settings(_user: dict = Depends(authenticated_user)) -> dict:
         "queuePaused": download_queue.paused,
         "limitedScanActive": repository.get_setting(conn, "limited_scan_active", "0") == "1",
         "scanRunning": scan_scheduler.scan_running,
+        "reorganizeRunning": _reorg_running(),
         "limitedScanActiveThreshold": int(repository.get_setting(conn, "limited_scan_active_threshold", "300") or "300"),
     }
 
@@ -674,12 +685,52 @@ def scan_local_library(_user: dict = Depends(authenticated_user)) -> dict:
 
 @app.post("/api/library/reorganize")
 def reorganize_library_endpoint(_user: dict = Depends(authenticated_user)) -> dict:
+    global _reorg_thread, _reorg_last_result
     from .library_organizer import reorganize_library
-    result = reorganize_library(conn, settings.library_root, komga_client)
+    with _reorg_lock:
+        if _reorg_running():
+            raise HTTPException(status_code=409, detail="reorganize already running")
+        _reorg_stop.clear()
+        _reorg_last_result = None
+
+        def _run() -> None:
+            global _reorg_last_result
+            try:
+                _reorg_last_result = reorganize_library(conn, settings.library_root, komga_client, _reorg_stop)
+                repository.log(
+                    conn, "info",
+                    f"Reorganize finished: {_reorg_last_result.get('moved', 0)} moved, "
+                    f"{_reorg_last_result.get('skippedActive', 0)} skipped (active)",
+                )
+            except Exception as exc:
+                _reorg_last_result = {"error": str(exc)}
+                repository.log(conn, "error", f"Reorganize failed: {exc}")
+
+        _reorg_thread = threading.Thread(target=_run, name="library-reorganize", daemon=True)
+        _reorg_thread.start()
+    return {"started": True, "running": True}
+
+
+@app.post("/api/library/reorganize/stop")
+def stop_reorganize(_user: dict = Depends(authenticated_user)) -> dict:
+    _reorg_stop.set()
+    repository.log(conn, "info", "Reorganize stop requested")
+    return {"stopped": True}
+
+
+@app.get("/api/library/reorganize/status")
+def reorganize_status(_user: dict = Depends(authenticated_user)) -> dict:
+    return {"running": _reorg_running(), "result": _reorg_last_result}
+
+
+@app.post("/api/library/komga-cleanup")
+def komga_cleanup_endpoint(_user: dict = Depends(authenticated_user)) -> dict:
+    from .library_organizer import cleanup_per_book_libraries
+    result = cleanup_per_book_libraries(conn, settings.library_root, komga_client)
     repository.log(
         conn, "info",
-        f"Manual library reorganize: {result['moved']} moved, {result['skipped']} skipped, "
-        f"{result.get('skippedActive', 0)} skipped (active download)",
+        f"Komga cleanup: {result.get('deleted', 0)} per-book libraries deleted, "
+        f"{result.get('komgaScanned', 0)} range libraries scanned",
     )
     return result
 
