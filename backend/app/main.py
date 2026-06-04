@@ -675,13 +675,12 @@ def scan_local_library(_user: dict = Depends(authenticated_user)) -> dict:
 @app.post("/api/library/reorganize")
 def reorganize_library_endpoint(_user: dict = Depends(authenticated_user)) -> dict:
     from .library_organizer import reorganize_library
-    if repository.unresolved_download_job_count(conn) > 0:
-        raise HTTPException(
-            status_code=409,
-            detail="downloads are currently running; reorganize after the queue clears",
-        )
     result = reorganize_library(conn, settings.library_root, komga_client)
-    repository.log(conn, "info", f"Manual library reorganize: {result['moved']} moved, {result['skipped']} skipped")
+    repository.log(
+        conn, "info",
+        f"Manual library reorganize: {result['moved']} moved, {result['skipped']} skipped, "
+        f"{result.get('skippedActive', 0)} skipped (active download)",
+    )
     return result
 
 

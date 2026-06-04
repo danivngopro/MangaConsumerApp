@@ -219,7 +219,7 @@ export function SettingsPage({ summary, loading, runAction }: SharedProps) {
                 onClick={() =>
                   runAction("Reorganize by chapter count", api.reorganizeLibrary)
                 }
-                disabled={loading || summary.queuedJobs + summary.runningJobs > 0}
+                disabled={loading}
               >
                 <FolderSync size={13} /> Reorganize by chapters
               </button>

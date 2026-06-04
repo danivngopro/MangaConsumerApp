@@ -43,8 +43,22 @@ def reorganize_library(
             "error": f"Library root does not exist: {library_root}",
             "moved": 0,
             "skipped": 0,
+            "skippedActive": 0,
             "errors": [],
         }
+
+    # Books with active downloads are skipped (not blocked — just left in place this run)
+    active_manga_ids: set[int] = {
+        int(row["manga_id"])
+        for row in conn.execute(
+            """
+            SELECT manga_id FROM jobs
+            WHERE type = 'download'
+              AND status IN ('queued', 'running')
+              AND manga_id IS NOT NULL
+            """
+        ).fetchall()
+    }
 
     manga_rows = conn.execute(
         """
@@ -56,9 +70,14 @@ def reorganize_library(
 
     moved = 0
     skipped = 0
+    skipped_active = 0
     errors: list[str] = []
 
     for row in manga_rows:
+        if int(row["id"]) in active_manga_ids:
+            skipped_active += 1
+            continue
+
         chapter_count = int(row["local_chapter_count"] or 0)
         target_range = get_range_name(chapter_count)
 
@@ -70,17 +89,13 @@ def reorganize_library(
         current = Path(current_str)
         book_name = current.name
 
-        # Determine whether the book is already in a range subdir of library_root
         if current.parent == library_root:
-            # Top-level folder: needs moving into range subdir
-            pass
+            pass  # top-level: needs moving
         elif current.parent.parent == library_root and current.parent.name in RANGE_NAMES:
-            # Already in a range dir
             if current.parent.name == target_range:
                 skipped += 1
                 continue
         else:
-            # Outside library_root structure — skip (could be a custom path)
             skipped += 1
             continue
 
@@ -90,7 +105,7 @@ def reorganize_library(
 
         target = library_root / target_range / book_name
         if target.exists():
-            errors.append(f"{book_name}: target path already exists at {target}")
+            errors.append(f"{book_name}: target already exists at {target}")
             skipped += 1
             continue
 
@@ -116,12 +131,25 @@ def reorganize_library(
             errors.append(f"{book_name}: {exc}")
             repository.log(conn, "error", f"Reorganize failed for '{book_name}': {exc}")
 
-    # Create/update range Komga libraries and scan them
+    # ── Komga: import unregistered books + create/scan range libraries ──────────
     komga_created = 0
     komga_scanned = 0
+    komga_imported = 0
     komga_errors: list[str] = []
 
     if komga_client.enabled:
+        # Import any books still at root level that aren't yet in any range dir
+        # (e.g. skipped-active books, or books outside the DB)
+        for entry in sorted(library_root.iterdir()):
+            if not entry.is_dir() or entry.name in RANGE_NAMES:
+                continue
+            try:
+                komga_client.ensure_library_for_book(entry.name)
+                komga_imported += 1
+            except Exception as exc:
+                komga_errors.append(f"import {entry.name}: {exc}")
+
+        # Create/update range libraries and scan each one
         for _, _, range_name in CHAPTER_RANGES:
             range_dir = library_root / range_name
             if not range_dir.exists():
@@ -136,21 +164,24 @@ def reorganize_library(
             except Exception as exc:
                 komga_errors.append(f"{range_name}: {exc}")
 
-        # Clean up per-book Komga libraries whose folders were moved away
+        # Clean up per-book libraries whose folders were moved away
         if moved > 0:
             _delete_orphaned_per_book_libraries(conn, library_root, komga_client)
 
     repository.log(
         conn,
         "info",
-        f"Library reorganization complete: {moved} moved, {skipped} skipped, {len(errors)} errors",
+        f"Library reorganization: {moved} moved, {skipped} skipped, "
+        f"{skipped_active} skipped (active download), {len(errors)} errors",
     )
     return {
         "moved": moved,
         "skipped": skipped,
+        "skippedActive": skipped_active,
         "errors": errors,
         "komgaCreated": komga_created,
         "komgaScanned": komga_scanned,
+        "komgaImported": komga_imported,
         "komgaErrors": komga_errors,
     }
 
@@ -168,18 +199,14 @@ def _delete_orphaned_per_book_libraries(
 
         for lib in libraries:
             lib_root = (lib.get("root") or "").rstrip("/")
-            # Skip range libraries
             if lib_root in range_roots:
                 continue
-            # Skip anything not under books_root_docker
             prefix = books_root + "/"
             if not lib_root.startswith(prefix):
                 continue
             relative = lib_root[len(prefix):]
-            # Per-book libraries have exactly one path component (no nested /)
             if "/" in relative:
                 continue
-            # If the corresponding host folder no longer exists at the top level, delete the library
             host_folder = library_root / relative
             if not host_folder.exists():
                 try:
