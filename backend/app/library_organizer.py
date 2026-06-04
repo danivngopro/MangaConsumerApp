@@ -39,7 +39,12 @@ def cleanup_per_book_libraries(
     library_root: Path,
     komga_client,
 ) -> dict:
-    """Delete all per-book Komga libraries and ensure range libraries are created and scanned."""
+    """
+    Delete only ORPHANED per-book Komga libraries — those whose folder no longer exists
+    at the top level of library_root (i.e. books that were already moved to a range dir).
+    Books still being read at root level are left completely untouched.
+    Also creates/scans any range libraries so moved books become visible.
+    """
     if not komga_client.enabled:
         return {"error": "Komga not configured", "deleted": 0, "komgaCreated": 0, "komgaScanned": 0, "errors": []}
 
@@ -52,26 +57,37 @@ def cleanup_per_book_libraries(
     range_roots = {f"{books_root}/{sanitize_filename(name)}" for _, _, name in CHAPTER_RANGES}
 
     deleted = 0
+    skipped = 0
     errors: list[str] = []
 
     for lib in libraries:
         lib_root = (lib.get("root") or "").rstrip("/")
+        # Leave range libraries alone
         if lib_root in range_roots:
             continue
+        # Only touch libraries under books_root_docker
         prefix = books_root + "/"
         if not lib_root.startswith(prefix):
             continue
         relative = lib_root[len(prefix):]
+        # Only per-book libraries have exactly one path component
         if "/" in relative:
             continue
+        # If the folder still exists at root level, the user may be reading it — skip
+        host_folder = library_root / relative
+        if host_folder.exists():
+            skipped += 1
+            continue
+        # Folder is gone (book was moved to a range dir) — safe to delete
         try:
             resp = komga_client.session.delete(f"{komga_client.libraries_url}/{lib['id']}", timeout=30)
             resp.raise_for_status()
             deleted += 1
-            repository.log(conn, "info", f"Cleanup: deleted per-book library '{lib.get('name')}'")
+            repository.log(conn, "info", f"Cleanup: deleted orphaned library '{lib.get('name')}'")
         except Exception as exc:
             errors.append(f"{lib.get('name')}: {exc}")
 
+    # Ensure range libraries exist and scan them so moved books appear
     komga_created = 0
     komga_scanned = 0
     for _, _, range_name in CHAPTER_RANGES:
@@ -90,9 +106,16 @@ def cleanup_per_book_libraries(
 
     repository.log(
         conn, "info",
-        f"Komga cleanup: {deleted} per-book libraries deleted, {komga_scanned} range libraries scanned",
+        f"Komga cleanup: {deleted} orphaned libraries deleted, {skipped} skipped (folder still exists), "
+        f"{komga_scanned} range libraries scanned",
     )
-    return {"deleted": deleted, "komgaCreated": komga_created, "komgaScanned": komga_scanned, "errors": errors}
+    return {
+        "deleted": deleted,
+        "skipped": skipped,
+        "komgaCreated": komga_created,
+        "komgaScanned": komga_scanned,
+        "errors": errors,
+    }
 
 
 def reorganize_library(
