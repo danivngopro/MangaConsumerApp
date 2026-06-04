@@ -12,6 +12,7 @@ import {
   Settings,
   CopyX,
   Tags,
+  Library,
 } from "lucide-react";
 import {
   api,
@@ -25,12 +26,13 @@ import { DashboardPage } from "./pages/DashboardPage";
 import { DownloadsPage } from "./pages/DownloadsPage";
 import { DuplicatesPage } from "./pages/DuplicatesPage";
 import { MetadataPage } from "./pages/MetadataPage";
+import { BrowsePage } from "./pages/BrowsePage";
 import { SearchPage } from "./pages/SearchPage";
 import { SettingsPage } from "./pages/SettingsPage";
 
-type Tab = "dashboard" | "downloads" | "duplicates" | "metadata" | "search" | "settings";
+type Tab = "dashboard" | "downloads" | "duplicates" | "metadata" | "browse" | "search" | "settings";
 
-const VALID_TABS: Tab[] = ["dashboard", "downloads", "duplicates", "metadata", "search", "settings"];
+const VALID_TABS: Tab[] = ["dashboard", "downloads", "duplicates", "metadata", "browse", "search", "settings"];
 
 function tabFromPath(pathname: string): Tab {
   const seg = pathname.replace(/^\//, "").split("/")[0];
@@ -188,6 +190,7 @@ export function App() {
     { id: "downloads", label: "Downloads", icon: <Download size={15} />, badge: activeDownloads || undefined },
     { id: "duplicates", label: "Duplicates", icon: <CopyX size={15} /> },
     { id: "metadata", label: "Metadata", icon: <Tags size={15} /> },
+    { id: "browse",   label: "Browse",   icon: <Library size={15} /> },
     { id: "search",    label: "Search",    icon: <Search size={15} /> },
     { id: "settings",  label: "Settings",  icon: <Settings size={15} /> },
   ];
@@ -292,6 +295,9 @@ export function App() {
           {activeTab === "downloads" && <DownloadsPage {...shared} />}
           {activeTab === "duplicates" && <DuplicatesPage {...shared} />}
           {activeTab === "metadata" && <MetadataPage {...shared} />}
+          {activeTab === "browse" && (
+            <BrowsePage {...shared} browseFilters={browseFilters} />
+          )}
           {activeTab === "search" && (
             <SearchPage {...shared} browseFilters={browseFilters} />
           )}

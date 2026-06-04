@@ -58,6 +58,9 @@ def build_komga_series_metadata(manga: dict, local_title: str | None = None) -> 
     if manga.get("remote_chapter_count"):
         payload["totalBookCount"] = int(manga["remote_chapter_count"])
         payload["totalBookCountLock"] = True
+    if manga.get("asura_description"):
+        payload["summary"] = manga["asura_description"]
+        payload["summaryLock"] = True
     if str(manga.get("asura_type") or "").lower() in {"manhwa", "webtoon"}:
         payload["readingDirection"] = "WEBTOON"
         payload["readingDirectionLock"] = True
@@ -102,10 +105,20 @@ def _verified_local_info(conn: sqlite3.Connection, manga: dict) -> tuple[str | N
     return manga["title"], None, True
 
 
-def sync_manga_metadata_to_komga(conn: sqlite3.Connection, komga_client, manga_id: int) -> dict:
+def sync_manga_metadata_to_komga(conn: sqlite3.Connection, komga_client, manga_id: int, asura_client=None) -> dict:
     manga = repository.get_manga_detail(conn, manga_id)
     if not manga:
         return {"synced": False, "needsReview": False, "error": "manga not found"}
+
+    if asura_client and manga.get("url") and not manga.get("asura_description"):
+        try:
+            series, chapters = asura_client.fetch_series(manga["url"])
+            repository.upsert_manga(conn, series.__dict__)
+            if chapters:
+                repository.upsert_chapters(conn, manga_id, [chapter.__dict__ for chapter in chapters])
+            manga = repository.get_manga_detail(conn, manga_id) or manga
+        except Exception as exc:
+            repository.log(conn, "warning", f"Asura metadata refresh failed for {manga['title']}: {exc}")
 
     local_title, folder_name, verified = _verified_local_info(conn, manga)
     if not verified:

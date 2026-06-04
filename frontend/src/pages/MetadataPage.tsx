@@ -59,6 +59,13 @@ export function MetadataPage({ loading, runAction }: SharedProps) {
         <StatCard label="Errors / review" value={`${errors}`} />
       </div>
 
+      <div className="status-bar" style={{ marginBottom: 14, alignItems: "flex-start" }}>
+        <span className="status-dot" style={{ marginTop: 7 }} />
+        <span>
+          Sync verified uses books already found by local library scan or confirmed duplicate matching, refreshes available Asura metadata including descriptions, then updates the matched Komga series. Run a library scan first if new local folders are missing here.
+        </span>
+      </div>
+
       <div className="card" style={{ marginBottom: 14 }}>
         <div className="filter-row">
           {(["unsynced", "error", "synced", "all"] as const).map((value) => (

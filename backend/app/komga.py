@@ -7,7 +7,7 @@ from dataclasses import dataclass
 import requests
 
 from . import repository
-from .utils import sanitize_filename
+from .utils import chapter_key, sanitize_filename
 
 
 @dataclass(frozen=True)
@@ -148,6 +148,28 @@ class KomgaClient:
         )
         response.raise_for_status()
 
+    def list_books_for_series(self, series_id: str) -> list[dict]:
+        payload = {"condition": {"seriesId": {"value": series_id}}}
+        try:
+            response = self.session.post(
+                f"{self.settings.url}/api/v1/books/list",
+                params={"unpaged": "true"},
+                json=payload,
+                timeout=30,
+            )
+            response.raise_for_status()
+            data = response.json()
+            return data.get("content", data if isinstance(data, list) else [])
+        except Exception:
+            response = self.session.get(
+                f"{self.settings.url}/api/v1/series/{series_id}/books",
+                params={"unpaged": "true"},
+                timeout=30,
+            )
+            response.raise_for_status()
+            data = response.json()
+            return data.get("content", data if isinstance(data, list) else [])
+
     def quick_scan_all(self) -> int:
         libraries = self.list_libraries()
         for library in libraries:
@@ -183,6 +205,54 @@ class KomgaClient:
 
     def sanitize_name(self, value: str) -> str:
         return unicodedata.normalize("NFKD", value).encode("ascii", "ignore").decode() or value
+
+
+def _book_number(book: dict) -> float:
+    metadata = book.get("metadata") or {}
+    for value in (
+        metadata.get("numberSort"),
+        metadata.get("number"),
+        book.get("number"),
+        book.get("name"),
+    ):
+        key = chapter_key(str(value or ""))
+        if key:
+            return float(key)
+    return 0.0
+
+
+def _book_label(book: dict, chapter: str) -> str:
+    metadata = book.get("metadata") or {}
+    return str(metadata.get("title") or book.get("name") or f"Chapter {chapter}")
+
+
+def _has_read_progress(book: dict) -> bool:
+    progress = book.get("readProgress") or {}
+    status = str(book.get("readStatus") or "").upper()
+    return (
+        status in {"READ", "IN_PROGRESS"}
+        or bool(progress.get("completed"))
+        or int(progress.get("page") or 0) > 0
+    )
+
+
+def latest_read_book(books: list[dict], komga_url: str, series_id: str) -> dict | None:
+    read_books = [book for book in books if book.get("id") and _has_read_progress(book)]
+    if not read_books:
+        return None
+    selected = max(read_books, key=_book_number)
+    chapter_number = _book_number(selected)
+    chapter = chapter_key(str(chapter_number))
+    progress = selected.get("readProgress") or {}
+    book_id = str(selected["id"])
+    return {
+        "book_id": book_id,
+        "chapter_key": chapter,
+        "label": _book_label(selected, chapter),
+        "page": int(progress.get("page") or 0),
+        "completed": bool(progress.get("completed")),
+        "komga_url": f"{komga_url.rstrip('/')}/series/{series_id}/book/{book_id}",
+    }
 
 
 def run_post_download_komga_action(

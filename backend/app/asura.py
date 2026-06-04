@@ -34,6 +34,7 @@ class AsuraSeries:
     artist: str | None = None
     genres: list | None = None
     rating: float | None = None
+    description: str | None = None
     last_chapter_at: str | None = None
 
 
@@ -246,6 +247,11 @@ class AsuraClient:
             title = soup.select_one("h1").get_text(" ", strip=True) if soup.select_one("h1") else self._title_from_slug(url)
 
         cover_node = soup.select_one('meta[property="og:image"]')
+        description_node = (
+            soup.select_one('meta[property="og:description"]')
+            or soup.select_one('meta[name="description"]')
+        )
+        description = fix_mojibake(description_node.get("content", "").strip()) if description_node else None
         episode_match = re.search(r'"numberOfEpisodes"\s*:\s*(\d+)', text)
         status_match = re.search(r"\b(ongoing|completed|hiatus|dropped)\b", soup.get_text(" ", strip=True), re.IGNORECASE)
         series = AsuraSeries(
@@ -255,6 +261,7 @@ class AsuraClient:
             cover_url=cover_node.get("content") if cover_node else None,
             status=status_match.group(1).lower() if status_match else None,
             remote_chapter_count=int(episode_match.group(1)) if episode_match else 0,
+            description=description,
         )
         chapters = self.parse_chapters(text, url)
         if chapters and not series.remote_chapter_count:
@@ -265,6 +272,13 @@ class AsuraClient:
                 cover_url=series.cover_url,
                 status=series.status,
                 remote_chapter_count=len(chapters),
+                type=series.type,
+                author=series.author,
+                artist=series.artist,
+                genres=series.genres,
+                rating=series.rating,
+                description=series.description,
+                last_chapter_at=series.last_chapter_at,
             )
         return series, chapters
 

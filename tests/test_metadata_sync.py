@@ -99,6 +99,22 @@ class MetadataSyncTests(unittest.TestCase):
         self.assertEqual(row["asura_genres"], [{"name": "Action"}])
         self.assertEqual(row["asura_rating"], 9.8)
 
+    def test_upsert_manga_stores_asura_description(self):
+        manga_id = repository.upsert_manga(
+            self.conn,
+            {
+                "slug": "murim-login",
+                "title": "Murim Login",
+                "url": "https://asurascans.com/comics/murim-login",
+                "status": "ongoing",
+                "remote_chapter_count": 100,
+                "description": "A hunter finds a strange gate and starts over.",
+            },
+        )
+
+        row = repository.get_manga_detail(self.conn, manga_id)
+        self.assertEqual(row["asura_description"], "A hunter finds a strange gate and starts over.")
+
     def test_metadata_sync_requires_verified_mapping_before_updating_komga(self):
         manga_id = repository.upsert_manga(
             self.conn,

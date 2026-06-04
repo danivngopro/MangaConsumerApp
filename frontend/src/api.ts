@@ -35,6 +35,17 @@ export type Book = {
   url: string;
   cover_url: string | null;
   status: string | null;
+  asura_type?: string | null;
+  asura_author?: string | null;
+  asura_artist?: string | null;
+  asura_genres?: Array<{ name?: string; slug?: string } | string>;
+  asura_rating?: number | null;
+  asura_description?: string | null;
+  asura_last_chapter_at?: string | null;
+  komga_series_id?: string | null;
+  komga_series_url?: string | null;
+  metadata_synced_at?: string | null;
+  metadata_last_error?: string | null;
   remote_chapter_count: number;
   local_chapter_count: number;
   missing_count: number;
@@ -55,9 +66,19 @@ export type BookDetail = Book & {
     id: number;
     chapter_key: string;
     label: string;
+    url: string;
+    komga_url?: string | null;
     is_downloaded: number;
     file_path: string | null;
   }>;
+  latest_read: {
+    book_id: string;
+    chapter_key: string;
+    label: string;
+    page: number;
+    completed: boolean;
+    komga_url: string;
+  } | null;
   local_chapters: string[];
   jobs: Job[];
 };
@@ -145,6 +166,26 @@ export type BrowseResult = {
 
 export type BrowseSearchResponse = {
   items: BrowseResult[];
+  total: number;
+  limit: number;
+  offset: number;
+};
+
+export type LocalBrowsePayload = {
+  search: string;
+  genres: string[];
+  status: string;
+  type: string;
+  sort: string;
+  order: string;
+  minChapters: number;
+  maxChapters: number;
+  limit: number;
+  offset: number;
+};
+
+export type LocalBrowseResponse = {
+  items: Book[];
   total: number;
   limit: number;
   offset: number;
@@ -316,6 +357,11 @@ export const api = {
   asuraFilters: () => request<BrowseFilters>("/api/asura/filters"),
   asuraSearch: (payload: BrowseSearchPayload) =>
     request<BrowseSearchResponse>("/api/asura/search", {
+      method: "POST",
+      body: JSON.stringify(payload),
+    }),
+  browseBooks: (payload: LocalBrowsePayload) =>
+    request<LocalBrowseResponse>("/api/browse/books", {
       method: "POST",
       body: JSON.stringify(payload),
     }),

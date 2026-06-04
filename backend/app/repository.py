@@ -282,8 +282,8 @@ def upsert_manga(conn: sqlite3.Connection, manga: dict) -> int:
         INSERT INTO manga(
             slug, title, normalized_title, url, cover_url, status,
             remote_chapter_count, asura_type, asura_author, asura_artist,
-            asura_genres_json, asura_rating, asura_last_chapter_at, updated_at
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            asura_genres_json, asura_rating, asura_description, asura_last_chapter_at, updated_at
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         ON CONFLICT(slug) DO UPDATE SET
             title = excluded.title,
             normalized_title = excluded.normalized_title,
@@ -296,6 +296,7 @@ def upsert_manga(conn: sqlite3.Connection, manga: dict) -> int:
             asura_artist = COALESCE(excluded.asura_artist, asura_artist),
             asura_genres_json = CASE WHEN excluded.asura_genres_json != '[]' THEN excluded.asura_genres_json ELSE asura_genres_json END,
             asura_rating = COALESCE(excluded.asura_rating, asura_rating),
+            asura_description = COALESCE(excluded.asura_description, asura_description),
             asura_last_chapter_at = COALESCE(excluded.asura_last_chapter_at, asura_last_chapter_at),
             updated_at = excluded.updated_at
         """,
@@ -312,6 +313,7 @@ def upsert_manga(conn: sqlite3.Connection, manga: dict) -> int:
             manga.get("artist") or manga.get("asura_artist"),
             json.dumps(manga.get("genres") or manga.get("asura_genres") or []),
             manga.get("rating") or manga.get("asura_rating"),
+            manga.get("description") or manga.get("asura_description"),
             manga.get("last_chapter_at") or manga.get("asura_last_chapter_at"),
             now,
         ),
@@ -389,6 +391,93 @@ def metadata_sync_candidates(conn: sqlite3.Connection) -> list[dict]:
             """
         ).fetchall()
     ]
+
+
+def _genre_values(raw_genres) -> set[str]:
+    values: set[str] = set()
+    for genre in raw_genres or []:
+        if isinstance(genre, dict):
+            for key in ("slug", "name", "title"):
+                if genre.get(key):
+                    values.add(str(genre[key]).strip().lower())
+        elif genre:
+            values.add(str(genre).strip().lower())
+    return values
+
+
+def _komga_series_url(komga_url: str, series_id: str | None) -> str | None:
+    if not komga_url or not series_id:
+        return None
+    return f"{komga_url.rstrip('/')}/series/{series_id}"
+
+
+def list_browse_books(
+    conn: sqlite3.Connection,
+    search: str = "",
+    genres: list[str] | None = None,
+    status: str = "all",
+    series_type: str = "all",
+    min_chapters: int = 0,
+    max_chapters: int = 0,
+    sort: str = "title",
+    order: str = "asc",
+    limit: int = 36,
+    offset: int = 0,
+    komga_url: str = "",
+) -> dict:
+    wanted = search.strip().lower()
+    wanted_genres = {genre.strip().lower() for genre in (genres or []) if genre.strip()}
+    min_count = max(0, int(min_chapters or 0))
+    max_count = max(0, int(max_chapters or 0))
+    status = (status or "all").lower()
+    series_type = (series_type or "all").lower()
+
+    rows = [clean_manga_row(row) for row in conn.execute("SELECT * FROM manga").fetchall()]
+    items = []
+    for item in rows:
+        chapter_count = int(item.get("local_chapter_count") or 0)
+        if chapter_count <= 0:
+            continue
+        haystack = " ".join(
+            str(value or "")
+            for value in (
+                item.get("title"),
+                item.get("asura_author"),
+                item.get("asura_artist"),
+                item.get("local_folder"),
+            )
+        ).lower()
+        if wanted and wanted not in haystack:
+            continue
+        if min_count and chapter_count < min_count:
+            continue
+        if max_count and chapter_count > max_count:
+            continue
+        if status != "all" and str(item.get("status") or "").lower() != status:
+            continue
+        if series_type != "all" and str(item.get("asura_type") or "").lower() != series_type:
+            continue
+        if wanted_genres and not wanted_genres.issubset(_genre_values(item.get("asura_genres"))):
+            continue
+        item["komga_series_url"] = _komga_series_url(komga_url, item.get("komga_series_id"))
+        items.append(item)
+
+    reverse = order == "desc"
+    if sort == "chapters":
+        items.sort(key=lambda row: int(row.get("local_chapter_count") or 0), reverse=reverse)
+    elif sort == "rating":
+        items.sort(key=lambda row: float(row.get("asura_rating") or 0), reverse=reverse)
+    elif sort == "updated":
+        items.sort(key=lambda row: str(row.get("updated_at") or ""), reverse=reverse)
+    elif sort == "missing":
+        items.sort(key=lambda row: int(row.get("missing_count") or 0), reverse=reverse)
+    else:
+        items.sort(key=lambda row: str(row.get("title") or "").lower(), reverse=reverse)
+
+    total = len(items)
+    limit = max(1, min(100, int(limit or 36)))
+    offset = max(0, int(offset or 0))
+    return {"items": items[offset:offset + limit], "total": total, "limit": limit, "offset": offset}
 
 
 def upsert_chapters(conn: sqlite3.Connection, manga_id: int, chapters: Iterable[dict]) -> None:

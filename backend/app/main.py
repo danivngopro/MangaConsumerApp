@@ -17,13 +17,14 @@ from . import repository
 from .asura import AsuraClient
 from .config import load_settings
 from .database import connect, init_db
-from .komga import KomgaClient, KomgaSettings
+from .komga import KomgaClient, KomgaSettings, latest_read_book
 from .library import scan_library, transfer_chapters
 from .metadata_sync import sync_manga_metadata_to_komga
 from .queue import DownloadQueue
 from .scanner import scan_specific, scan_priority_books
 from .scheduler import ScanScheduler
 from .utils import normalize_title
+from .utils import chapter_key
 
 
 class SpecificScanRequest(BaseModel):
@@ -77,6 +78,19 @@ class BrowseSearchRequest(BaseModel):
     minChapters: int = 0
     maxChapters: int = 0
     limit: int = 24
+    offset: int = 0
+
+
+class LocalBrowseRequest(BaseModel):
+    search: str = ""
+    genres: list[str] = Field(default_factory=list)
+    status: str = "all"
+    type: str = "all"
+    sort: str = "title"
+    order: str = "asc"
+    minChapters: int = 0
+    maxChapters: int = 0
+    limit: int = 36
     offset: int = 0
 
 
@@ -278,6 +292,27 @@ def book_detail(manga_id: int, _user: dict = Depends(authenticated_user)) -> dic
     detail = repository.get_manga_detail(conn, manga_id)
     if detail is None:
         raise HTTPException(status_code=404, detail="manga not found")
+    if settings.komga_url and detail.get("komga_series_id"):
+        try:
+            books = komga_client.list_books_for_series(str(detail["komga_series_id"]))
+            komga_by_chapter = {}
+            for book in books:
+                metadata = book.get("metadata") or {}
+                number = (
+                    metadata.get("number")
+                    or metadata.get("numberSort")
+                    or book.get("number")
+                    or book.get("name")
+                    or ""
+                )
+                key = chapter_key(str(number))
+                if key and book.get("id"):
+                    komga_by_chapter[key] = f"{settings.komga_url.rstrip('/')}/series/{detail['komga_series_id']}/book/{book['id']}"
+            for chapter in detail.get("chapters", []):
+                chapter["komga_url"] = komga_by_chapter.get(chapter.get("chapter_key"))
+            detail["latest_read"] = latest_read_book(books, settings.komga_url, str(detail["komga_series_id"]))
+        except Exception as exc:
+            repository.log(conn, "warning", f"Could not load Komga chapter links for {detail['title']}: {exc}")
     return detail
 
 
@@ -317,7 +352,7 @@ def sync_metadata(payload: MetadataSyncRequest | None = None, _user: dict = Depe
     errors: list[str] = []
     for item in candidates:
         try:
-            result = sync_manga_metadata_to_komga(conn, komga_client, int(item["id"]))
+            result = sync_manga_metadata_to_komga(conn, komga_client, int(item["id"]), asura_client)
             if result.get("synced"):
                 synced += 1
             if result.get("needsReview"):
@@ -634,6 +669,24 @@ def asura_search(payload: BrowseSearchRequest, _user: dict = Depends(authenticat
         item["missing_count"] = max(0, int(item["chapter_count"] or 0) - int(item["local_chapter_count"] or 0))
         item["local_folder"] = local["folder_path"] if local else (tracked_item["local_folder"] if tracked_item else None)
     return result
+
+
+@app.post("/api/browse/books")
+def browse_books(payload: LocalBrowseRequest, _user: dict = Depends(authenticated_user)) -> dict:
+    return repository.list_browse_books(
+        conn,
+        search=payload.search,
+        genres=payload.genres,
+        status=payload.status,
+        series_type=payload.type,
+        sort=payload.sort,
+        order=payload.order,
+        min_chapters=payload.minChapters,
+        max_chapters=payload.maxChapters,
+        limit=payload.limit,
+        offset=payload.offset,
+        komga_url=settings.komga_url,
+    )
 
 
 @app.get("/api/settings")
