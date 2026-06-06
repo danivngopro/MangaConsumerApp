@@ -481,7 +481,7 @@ export const api = {
   reorganizeStop: () =>
     request<{ stopped: boolean }>("/api/library/reorganize/stop", { method: "POST" }),
   reorganizeStatus: () =>
-    request<{ running: boolean; result: Record<string, unknown> | null }>("/api/library/reorganize/status"),
+    request<{ running: boolean; result: Record<string, unknown> | null; progress: { total: number; processed: number; moved: number; current: string } | null }>("/api/library/reorganize/status"),
   komgaCleanup: () =>
     request<{ deleted: number; komgaCreated: number; komgaScanned: number; errors: string[] }>(
       "/api/library/komga-cleanup",
@@ -492,7 +492,7 @@ export const api = {
   deduplicateStop: () =>
     request<{ stopped: boolean }>("/api/library/deduplicate/stop", { method: "POST" }),
   deduplicateStatus: () =>
-    request<{ running: boolean; result: Record<string, unknown> | null }>("/api/library/deduplicate/status"),
+    request<{ running: boolean; result: Record<string, unknown> | null; progress: { phase: string; total: number; processed: number; deleted: number; current: string } | null }>("/api/library/deduplicate/status"),
   systemFlush: () => request<{ started: boolean }>("/api/system/flush", { method: "POST" }),
   systemFlushStop: () => request<{ stopped: boolean }>("/api/system/flush/stop", { method: "POST" }),
   systemFlushStatus: () => request<{ running: boolean; tasks: FlushTask[] }>("/api/system/flush/status"),

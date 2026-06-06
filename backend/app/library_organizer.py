@@ -132,6 +132,7 @@ def reorganize_library(
     library_root: Path,
     komga_client,
     stop_event: threading.Event | None = None,
+    progress: dict | None = None,
 ) -> dict:
     if not library_root.exists():
         return {
@@ -169,6 +170,9 @@ def reorganize_library(
     komga_libs_deleted = 0
     errors: list[str] = []
 
+    if progress is not None:
+        progress.update({"total": len(manga_rows), "processed": 0, "moved": 0, "current": ""})
+
     # Pre-fetch all Komga libraries ONCE — avoids one HTTP round-trip per book
     komga_by_root: dict[str, dict] = {}
     if komga_client.enabled:
@@ -180,6 +184,10 @@ def reorganize_library(
     for row in manga_rows:
         if stop_event and stop_event.is_set():
             break
+
+        if progress is not None:
+            progress["current"] = str(row["title"] or "")
+            progress["processed"] = moved + skipped + skipped_active
 
         if int(row["id"]) in active_manga_ids:
             skipped_active += 1
@@ -261,6 +269,8 @@ def reorganize_library(
             )
             conn.commit()
             moved += 1
+            if progress is not None:
+                progress["moved"] = moved
             repository.log(conn, "info", f"Reorganized '{book_name}' → {target_range} ({chapter_count} ch)")
         except Exception as exc:
             errors.append(f"{book_name}: {exc}")
@@ -333,6 +343,7 @@ def deduplicate_library(
     komga_client,
     stop_event: threading.Event | None = None,
     threshold: float = 0.82,
+    progress: dict | None = None,
 ) -> dict:
     """
     Find all books with similar titles across all range directories and root level.
@@ -363,6 +374,9 @@ def deduplicate_library(
 
     n = len(books)
 
+    if progress is not None:
+        progress.update({"phase": "comparing", "total": n, "processed": 0, "deleted": 0, "current": ""})
+
     # Union-find to cluster similar titles
     parent = list(range(n))
 
@@ -378,6 +392,9 @@ def deduplicate_library(
     for i in range(n):
         if stop_event and stop_event.is_set():
             break
+        if progress is not None:
+            progress["processed"] = i
+            progress["current"] = books[i]["title"]
         for j in range(i + 1, n):
             score, _ = title_similarity(books[i]["title"], books[j]["title"])
             if score >= threshold:
@@ -403,6 +420,10 @@ def deduplicate_library(
     chapters_transferred = 0
     skipped_active = 0
     errors: list[str] = []
+
+    if progress is not None:
+        progress["phase"] = "deleting"
+        progress["processed"] = n
 
     for group_indices in groups.values():
         if len(group_indices) <= 1:
@@ -443,6 +464,9 @@ def deduplicate_library(
                 if dup["folder"].exists():
                     shutil.rmtree(dup["folder"])
                     deleted += 1
+                    if progress is not None:
+                        progress["deleted"] = deleted
+                        progress["current"] = dup["folder"].name
                     repository.log(
                         conn, "info",
                         f"Dedup: deleted '{dup['folder'].name}' ({dup['chapter_count']} ch) "

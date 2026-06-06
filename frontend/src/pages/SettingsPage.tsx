@@ -148,6 +148,76 @@ function FlushCard({ flushRunning, loading }: { flushRunning: boolean; loading: 
   );
 }
 
+function ProgressBar({ pct }: { pct: number }) {
+  return (
+    <div style={{ height: 4, background: "var(--border)", borderRadius: 2, overflow: "hidden", marginTop: 6 }}>
+      <div style={{
+        height: "100%", width: `${pct}%`, background: "var(--accent)", borderRadius: 2,
+        transition: "width 0.4s ease",
+      }} />
+    </div>
+  );
+}
+
+function ReorgProgress({ running }: { running: boolean }) {
+  const [prog, setProg] = useState<{ total: number; processed: number; moved: number; current: string } | null>(null);
+
+  useEffect(() => {
+    if (!running) { setProg(null); return; }
+    const iv = setInterval(async () => {
+      try {
+        const s = await api.reorganizeStatus();
+        if (s.progress) setProg(s.progress);
+        if (!s.running) clearInterval(iv);
+      } catch { clearInterval(iv); }
+    }, 1200);
+    return () => clearInterval(iv);
+  }, [running]);
+
+  if (!running || !prog) return null;
+  const pct = prog.total ? Math.round((prog.processed / prog.total) * 100) : 0;
+  return (
+    <div style={{ marginTop: 10 }}>
+      <div style={{ display: "flex", justifyContent: "space-between", fontSize: 12, color: "var(--text-3)", marginBottom: 2 }}>
+        <span style={{ overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", maxWidth: "60%" }}>{prog.current}</span>
+        <span style={{ whiteSpace: "nowrap" }}>{prog.processed}/{prog.total} · {prog.moved} moved</span>
+      </div>
+      <ProgressBar pct={pct} />
+    </div>
+  );
+}
+
+function DedupProgress({ running }: { running: boolean }) {
+  const [prog, setProg] = useState<{ phase: string; total: number; processed: number; deleted: number; current: string } | null>(null);
+
+  useEffect(() => {
+    if (!running) { setProg(null); return; }
+    const iv = setInterval(async () => {
+      try {
+        const s = await api.deduplicateStatus();
+        if (s.progress) setProg(s.progress);
+        if (!s.running) clearInterval(iv);
+      } catch { clearInterval(iv); }
+    }, 1200);
+    return () => clearInterval(iv);
+  }, [running]);
+
+  if (!running || !prog) return null;
+  const pct = prog.total ? Math.round((prog.processed / prog.total) * 100) : 0;
+  const label = prog.phase === "comparing"
+    ? `Comparing ${prog.processed}/${prog.total}`
+    : `${prog.deleted} deleted`;
+  return (
+    <div style={{ marginTop: 10 }}>
+      <div style={{ display: "flex", justifyContent: "space-between", fontSize: 12, color: "var(--text-3)", marginBottom: 2 }}>
+        <span style={{ overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", maxWidth: "60%" }}>{prog.current}</span>
+        <span style={{ whiteSpace: "nowrap" }}>{label}</span>
+      </div>
+      <ProgressBar pct={pct} />
+    </div>
+  );
+}
+
 export function SettingsPage({ summary, loading, runAction }: SharedProps) {
   const [intervalDays,          setIntervalDays]          = useState(summary.autoScanEveryDays);
   const [downloadConcurrency,   setDownloadConcurrency]   = useState(summary.downloadConcurrency);
@@ -402,6 +472,8 @@ export function SettingsPage({ summary, loading, runAction }: SharedProps) {
                 </button>
               )}
             </div>
+            <ReorgProgress running={summary.reorganizeRunning} />
+            <DedupProgress running={summary.deduplicateRunning} />
           </div>
         </div>
       </div>

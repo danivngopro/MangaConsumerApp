@@ -183,11 +183,13 @@ scan_stop_event = threading.Event()
 _reorg_stop = threading.Event()
 _reorg_thread: threading.Thread | None = None
 _reorg_last_result: dict | None = None
+_reorg_progress: dict = {}
 _reorg_lock = threading.Lock()
 
 _dedup_stop = threading.Event()
 _dedup_thread: threading.Thread | None = None
 _dedup_last_result: dict | None = None
+_dedup_progress: dict = {}
 _dedup_lock = threading.Lock()
 
 
@@ -796,8 +798,9 @@ def reorganize_library_endpoint(_user: dict = Depends(authenticated_user)) -> di
 
         def _run() -> None:
             global _reorg_last_result
+            _reorg_progress.clear()
             try:
-                _reorg_last_result = reorganize_library(conn, settings.library_root, komga_client, _reorg_stop)
+                _reorg_last_result = reorganize_library(conn, settings.library_root, komga_client, _reorg_stop, progress=_reorg_progress)
                 repository.log(
                     conn, "info",
                     f"Reorganize finished: {_reorg_last_result.get('moved', 0)} moved, "
@@ -821,7 +824,7 @@ def stop_reorganize(_user: dict = Depends(authenticated_user)) -> dict:
 
 @app.get("/api/library/reorganize/status")
 def reorganize_status(_user: dict = Depends(authenticated_user)) -> dict:
-    return {"running": _reorg_running(), "result": _reorg_last_result}
+    return {"running": _reorg_running(), "result": _reorg_last_result, "progress": _reorg_progress if _reorg_running() else None}
 
 
 @app.post("/api/library/komga-cleanup")
@@ -848,8 +851,9 @@ def deduplicate_library_endpoint(_user: dict = Depends(authenticated_user)) -> d
 
         def _run() -> None:
             global _dedup_last_result
+            _dedup_progress.clear()
             try:
-                _dedup_last_result = deduplicate_library(conn, settings.library_root, komga_client, _dedup_stop)
+                _dedup_last_result = deduplicate_library(conn, settings.library_root, komga_client, _dedup_stop, progress=_dedup_progress)
                 repository.log(
                     conn, "info",
                     f"Dedup finished: {_dedup_last_result.get('deleted', 0)} deleted, "
@@ -873,7 +877,7 @@ def stop_deduplicate(_user: dict = Depends(authenticated_user)) -> dict:
 
 @app.get("/api/library/deduplicate/status")
 def deduplicate_status(_user: dict = Depends(authenticated_user)) -> dict:
-    return {"running": _dedup_running(), "result": _dedup_last_result}
+    return {"running": _dedup_running(), "result": _dedup_last_result, "progress": _dedup_progress if _dedup_running() else None}
 
 
 @app.post("/api/system/flush")
