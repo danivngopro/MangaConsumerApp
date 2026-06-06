@@ -38,6 +38,10 @@ class KomgaClient:
         response.raise_for_status()
         return response.json()
 
+    def list_libraries_by_root(self) -> dict[str, dict]:
+        """Single API call → dict keyed by docker root path (rstripped)."""
+        return {(lib.get("root") or "").rstrip("/"): lib for lib in self.list_libraries()}
+
     def find_library_for_book(self, book_title: str) -> dict | None:
         docker_root = self.docker_root_for_book(book_title)
         for library in self.list_libraries():

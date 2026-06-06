@@ -48,7 +48,7 @@ def cleanup_per_book_libraries(
         return {"error": "Komga not configured", "deleted": 0, "komgaCreated": 0, "komgaScanned": 0, "errors": []}
 
     try:
-        libraries = komga_client.list_libraries()
+        komga_by_root = komga_client.list_libraries_by_root()
     except Exception as exc:
         return {"error": f"Could not list Komga libraries: {exc}", "deleted": 0, "komgaCreated": 0, "komgaScanned": 0, "errors": []}
 
@@ -58,7 +58,7 @@ def cleanup_per_book_libraries(
     deleted = 0
     errors: list[str] = []
 
-    for lib in libraries:
+    for lib in list(komga_by_root.values()):
         lib_root = (lib.get("root") or "").rstrip("/")
         # Leave range libraries alone
         if lib_root in range_roots:
@@ -79,18 +79,38 @@ def cleanup_per_book_libraries(
         except Exception as exc:
             errors.append(f"{lib.get('name')}: {exc}")
 
-    # Ensure range libraries exist and scan them so books remain accessible
+    # Ensure range libraries exist and scan them — use the already-fetched dict
     komga_created = 0
     komga_scanned = 0
     for _, _, range_name in CHAPTER_RANGES:
         range_dir = library_root / range_name
         range_dir.mkdir(parents=True, exist_ok=True)
+        docker_root = komga_client.docker_root_for_book(range_name)
+        existing = komga_by_root.get(docker_root)
         try:
-            library, created = komga_client.ensure_library_for_book(range_name)
-            if created:
+            if existing:
+                lib_id = str(existing["id"])
+            else:
+                payload = {
+                    "name": komga_client.sanitize_name(range_name),
+                    "root": docker_root,
+                    "importComicInfoBook": True,
+                    "importComicInfoSeries": True,
+                    "importComicInfoCollection": True,
+                    "importEpubBook": True,
+                    "importEpubSeries": True,
+                    "scanForceModifiedTime": True,
+                    "repairExtensions": True,
+                    "convertToCbz": True,
+                    "emptyTrashAfterScan": True,
+                    "scanOnStartup": False,
+                }
+                resp = komga_client.session.post(komga_client.libraries_url, json=payload, timeout=30)
+                resp.raise_for_status()
+                lib_id = str(resp.json()["id"])
                 komga_created += 1
                 time.sleep(1)
-            komga_client.quick_scan_library(str(library["id"]))
+            komga_client.quick_scan_library(lib_id)
             komga_scanned += 1
         except Exception as exc:
             errors.append(f"{range_name}: {exc}")
@@ -149,6 +169,14 @@ def reorganize_library(
     komga_libs_deleted = 0
     errors: list[str] = []
 
+    # Pre-fetch all Komga libraries ONCE — avoids one HTTP round-trip per book
+    komga_by_root: dict[str, dict] = {}
+    if komga_client.enabled:
+        try:
+            komga_by_root = komga_client.list_libraries_by_root()
+        except Exception as exc:
+            repository.log(conn, "warning", f"Could not pre-fetch Komga libraries: {exc}")
+
     for row in manga_rows:
         if stop_event and stop_event.is_set():
             break
@@ -189,14 +217,16 @@ def reorganize_library(
             skipped += 1
             continue
 
-        # Delete the per-book Komga library BEFORE moving so Komga removes it cleanly
-        # (moving the folder first would leave Komga with a broken/orphaned entry)
+        # Delete the per-book Komga library BEFORE moving using the pre-fetched dict
         if komga_client.enabled:
-            try:
-                deleted = komga_client.delete_library_for_book(book_name)
-                if deleted:
+            docker_root = komga_client.docker_root_for_book(book_name)
+            lib = komga_by_root.get(docker_root)
+            if lib:
+                try:
+                    resp = komga_client.session.delete(f"{komga_client.libraries_url}/{lib['id']}", timeout=30)
+                    resp.raise_for_status()
+                    komga_by_root.pop(docker_root, None)
                     komga_libs_deleted += 1
-                    # Clear stale Komga references from DB
                     conn.execute(
                         """
                         UPDATE manga
@@ -210,8 +240,8 @@ def reorganize_library(
                         (repository.utc_now(), row["id"]),
                     )
                     conn.commit()
-            except Exception as exc:
-                repository.log(conn, "warning", f"Could not delete per-book library for '{book_name}': {exc}")
+                except Exception as exc:
+                    repository.log(conn, "warning", f"Could not delete per-book library for '{book_name}': {exc}")
 
         # Move the folder into the target range directory
         try:
@@ -239,6 +269,7 @@ def reorganize_library(
     stopped_early = stop_event is not None and stop_event.is_set()
 
     # Create/update range Komga libraries and scan them (skip if stopped early)
+    # Re-use komga_by_root (already fetched) to avoid extra list_libraries() calls
     komga_created = 0
     komga_scanned = 0
     komga_errors: list[str] = []
@@ -247,12 +278,32 @@ def reorganize_library(
         for _, _, range_name in CHAPTER_RANGES:
             range_dir = library_root / range_name
             range_dir.mkdir(parents=True, exist_ok=True)
+            docker_root = komga_client.docker_root_for_book(range_name)
+            existing = komga_by_root.get(docker_root)
             try:
-                library, created = komga_client.ensure_library_for_book(range_name)
-                if created:
+                if existing:
+                    lib_id = str(existing["id"])
+                else:
+                    payload = {
+                        "name": komga_client.sanitize_name(range_name),
+                        "root": docker_root,
+                        "importComicInfoBook": True,
+                        "importComicInfoSeries": True,
+                        "importComicInfoCollection": True,
+                        "importEpubBook": True,
+                        "importEpubSeries": True,
+                        "scanForceModifiedTime": True,
+                        "repairExtensions": True,
+                        "convertToCbz": True,
+                        "emptyTrashAfterScan": True,
+                        "scanOnStartup": False,
+                    }
+                    resp = komga_client.session.post(komga_client.libraries_url, json=payload, timeout=30)
+                    resp.raise_for_status()
+                    lib_id = str(resp.json()["id"])
                     komga_created += 1
                     time.sleep(1)
-                komga_client.quick_scan_library(str(library["id"]))
+                komga_client.quick_scan_library(lib_id)
                 komga_scanned += 1
             except Exception as exc:
                 komga_errors.append(f"{range_name}: {exc}")

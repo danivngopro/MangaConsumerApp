@@ -2,11 +2,14 @@ from __future__ import annotations
 
 import sqlite3
 from collections.abc import Callable
+from pathlib import Path
 
 from .asura import AsuraClient, AsuraSeries
 from .duplicates import all_title_matches, best_title_match
 from .library import local_match_for_title, scan_library
+from .library_organizer import get_range_name
 from . import repository
+from .utils import sanitize_filename
 
 
 def scan_full_catalog(
@@ -25,7 +28,7 @@ def scan_full_catalog(
     for series_hint in series_list:
         if should_stop and should_stop():
             break
-        result = scan_one_series(conn, client, series_hint, inventory, should_stop=should_stop)
+        result = scan_one_series(conn, client, series_hint, inventory, library_root=library_root, should_stop=should_stop)
         scanned += 1
         enqueued += result["enqueued"]
 
@@ -112,7 +115,7 @@ def scan_limited_catalog_batch(
                     status=item.get("status"),
                     remote_chapter_count=int(item.get("chapter_count") or 0),
                 )
-                result_item = scan_one_series_deferred(conn, client, hint, inventory, should_stop=should_stop)
+                result_item = scan_one_series_deferred(conn, client, hint, inventory, library_root=library_root, should_stop=should_stop)
                 scanned += 1
                 missing_count = len(result_item["missingChapterIds"])
                 if result_item.get("stopped"):
@@ -171,7 +174,7 @@ def scan_specific(
     series = client.find_series(query)
     if not series:
         raise ValueError(f"No Asura manga found for: {query}")
-    result = scan_one_series(conn, client, series, inventory, priority=priority, should_stop=should_stop)
+    result = scan_one_series(conn, client, series, inventory, library_root=library_root, priority=priority, should_stop=should_stop)
     repository.log(conn, "info", f"Specific scan complete: {series.title}, {result['enqueued']} downloads queued (priority={priority})")
     return result
 
@@ -181,6 +184,7 @@ def scan_one_series(
     client: AsuraClient,
     series_hint: AsuraSeries,
     inventory: dict[str, dict],
+    library_root: Path | None = None,
     priority: int = 0,
     should_stop: Callable[[], bool] | None = None,
 ) -> dict:
@@ -229,6 +233,8 @@ def scan_one_series(
     )
 
     local = _resolve_local_for_manga(conn, manga_id, series.title, inventory)
+    if local is None and library_root is not None:
+        _assign_range_folder(conn, manga_id, series.title, series.remote_chapter_count or len(chapters), library_root)
     local_keys = local["chapters"] if local else set()
     missing = repository.find_missing_chapters(conn, manga_id, local_keys)
     duplicate_status = None
@@ -287,6 +293,7 @@ def scan_one_series_deferred(
     client: AsuraClient,
     series_hint: AsuraSeries,
     inventory: dict[str, dict],
+    library_root: Path | None = None,
     should_stop: Callable[[], bool] | None = None,
 ) -> dict:
     """Scan a series and return missing chapters WITHOUT enqueueing them (for progressive top-up)."""
@@ -333,6 +340,8 @@ def scan_one_series_deferred(
     )
 
     local = _resolve_local_for_manga(conn, manga_id, series.title, inventory)
+    if local is None and library_root is not None:
+        _assign_range_folder(conn, manga_id, series.title, series.remote_chapter_count or len(chapters), library_root)
     local_keys = local["chapters"] if local else set()
     missing = repository.find_missing_chapters(conn, manga_id, local_keys)
     duplicate_status = None
@@ -381,6 +390,25 @@ def scan_one_series_deferred(
         "duplicateStatus": duplicate_status,
         "stopped": False,
     }
+
+
+def _assign_range_folder(
+    conn: sqlite3.Connection,
+    manga_id: int,
+    title: str,
+    chapter_count: int,
+    library_root: Path,
+) -> None:
+    """Set download_folder_override to the correct range subfolder for a brand-new book."""
+    range_name = get_range_name(max(0, chapter_count))
+    folder = str(library_root / range_name / sanitize_filename(title))
+    existing = conn.execute(
+        "SELECT download_folder_override, local_folder FROM manga WHERE id = ?", (manga_id,)
+    ).fetchone()
+    if existing and (existing["download_folder_override"] or existing["local_folder"]):
+        return  # already has a target — don't overwrite
+    repository.set_manga_download_override(conn, manga_id, folder, title)
+    repository.log(conn, "info", f"New book '{title}' → pre-assigned to {range_name}")
 
 
 def _resolve_local_for_manga(
@@ -522,7 +550,7 @@ def scan_priority_books(
                 rating=item.get("rating"),
                 last_chapter_at=item.get("last_chapter_at"),
             )
-            result_item = scan_one_series(conn, client, hint, inventory, priority=1, should_stop=should_stop)
+            result_item = scan_one_series(conn, client, hint, inventory, library_root=library_root, priority=1, should_stop=should_stop)
             scanned += 1
             enqueued += result_item["enqueued"]
             if int(result_item["mangaId"]) > 0:
