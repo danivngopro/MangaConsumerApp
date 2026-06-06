@@ -134,35 +134,30 @@ def reorganize_library(
     stop_event: threading.Event | None = None,
     progress: dict | None = None,
 ) -> dict:
+    from .library import _iter_book_folders, extract_chapter_key, COMIC_EXTENSIONS
+
     if not library_root.exists():
         return {
             "error": f"Library root does not exist: {library_root}",
-            "moved": 0,
-            "skipped": 0,
-            "skippedActive": 0,
-            "errors": [],
+            "moved": 0, "skipped": 0, "skippedActive": 0,
+            "komgaLibsDeleted": 0, "komgaCreated": 0, "komgaScanned": 0,
+            "errors": [], "komgaErrors": [],
         }
 
-    # Books with active downloads are left in place this run
-    active_manga_ids: set[int] = {
-        int(row["manga_id"])
-        for row in conn.execute(
-            """
-            SELECT manga_id FROM jobs
-            WHERE type = 'download'
-              AND status IN ('queued', 'running')
-              AND manga_id IS NOT NULL
-            """
-        ).fetchall()
-    }
+    # Folders with active downloads are untouchable
+    active_folders: set[Path] = set()
+    for row in conn.execute(
+        """
+        SELECT m.local_folder FROM manga m
+        JOIN jobs j ON j.manga_id = m.id
+        WHERE j.status IN ('queued', 'running') AND m.local_folder IS NOT NULL
+        """
+    ).fetchall():
+        if row["local_folder"]:
+            active_folders.add(Path(row["local_folder"]))
 
-    manga_rows = conn.execute(
-        """
-        SELECT id, title, local_folder, download_folder_override, local_chapter_count
-        FROM manga
-        WHERE local_folder IS NOT NULL
-        """
-    ).fetchall()
+    # Walk the filesystem directly — no dependency on manga.local_folder being set
+    all_folders = list(_iter_book_folders(library_root))
 
     moved = 0
     skipped = 0
@@ -171,9 +166,9 @@ def reorganize_library(
     errors: list[str] = []
 
     if progress is not None:
-        progress.update({"total": len(manga_rows), "processed": 0, "moved": 0, "current": ""})
+        progress.update({"total": len(all_folders), "processed": 0, "moved": 0, "current": ""})
 
-    # Pre-fetch all Komga libraries ONCE — avoids one HTTP round-trip per book
+    # Pre-fetch all Komga libraries ONCE
     komga_by_root: dict[str, dict] = {}
     if komga_client.enabled:
         try:
@@ -181,53 +176,51 @@ def reorganize_library(
         except Exception as exc:
             repository.log(conn, "warning", f"Could not pre-fetch Komga libraries: {exc}")
 
-    for row in manga_rows:
+    for folder in all_folders:
         if stop_event and stop_event.is_set():
             break
 
         if progress is not None:
-            progress["current"] = str(row["title"] or "")
+            progress["current"] = folder.name
             progress["processed"] = moved + skipped + skipped_active
 
-        if int(row["id"]) in active_manga_ids:
+        if folder in active_folders:
             skipped_active += 1
             continue
 
-        chapter_count = int(row["local_chapter_count"] or 0)
+        # Count chapters directly from the filesystem
+        comic_files = [
+            f for f in folder.rglob("*")
+            if f.is_file() and f.suffix.lower() in COMIC_EXTENSIONS
+        ]
+        chapter_keys: set[str] = set()
+        for cf in comic_files:
+            key = extract_chapter_key(cf.name)
+            if key:
+                chapter_keys.add(key)
+        chapter_count = len(chapter_keys) if chapter_keys else len(comic_files)
+
         target_range = get_range_name(chapter_count)
 
-        current_str = row["download_folder_override"] or row["local_folder"]
-        if not current_str:
-            skipped += 1
-            continue
-
-        current = Path(current_str)
-        book_name = current.name
-
-        if current.parent == library_root:
-            pass  # top-level: needs moving
-        elif current.parent.parent == library_root and current.parent.name in RANGE_NAMES:
-            if current.parent.name == target_range:
+        # Already in the right range folder → skip
+        if folder.parent.name in RANGE_NAMES:
+            if folder.parent.name == target_range:
                 skipped += 1
                 continue
-        else:
-            # Outside library_root structure — skip
+        elif folder.parent != library_root:
+            # Unexpected nesting — skip
             skipped += 1
             continue
 
-        if not current.exists():
-            skipped += 1
-            continue
-
-        target = library_root / target_range / book_name
+        target = library_root / target_range / folder.name
         if target.exists():
-            errors.append(f"{book_name}: target already exists at {target}")
+            # Collision handled by deduplicate step
             skipped += 1
             continue
 
-        # Delete the per-book Komga library BEFORE moving using the pre-fetched dict
+        # Delete the per-book Komga library BEFORE moving
         if komga_client.enabled:
-            docker_root = komga_client.docker_root_for_book(book_name)
+            docker_root = komga_client.docker_root_for_book(folder.name)
             lib = komga_by_root.get(docker_root)
             if lib:
                 try:
@@ -243,18 +236,18 @@ def reorganize_library(
                             komga_imported_at = NULL,
                             komga_scanned_at  = NULL,
                             updated_at        = ?
-                        WHERE id = ?
+                        WHERE local_folder = ? OR download_folder_override = ?
                         """,
-                        (repository.utc_now(), row["id"]),
+                        (repository.utc_now(), str(folder), str(folder)),
                     )
                     conn.commit()
                 except Exception as exc:
-                    repository.log(conn, "warning", f"Could not delete per-book library for '{book_name}': {exc}")
+                    repository.log(conn, "warning", f"Could not delete per-book library for '{folder.name}': {exc}")
 
-        # Move the folder into the target range directory
+        # Move the folder
         try:
             target.parent.mkdir(parents=True, exist_ok=True)
-            shutil.move(str(current), str(target))
+            shutil.move(str(folder), str(target))
             new_str = str(target)
             now = repository.utc_now()
             conn.execute(
@@ -263,23 +256,22 @@ def reorganize_library(
                 SET local_folder = ?,
                     download_folder_override = CASE WHEN download_folder_override IS NOT NULL THEN ? ELSE NULL END,
                     updated_at = ?
-                WHERE id = ?
+                WHERE local_folder = ? OR download_folder_override = ?
                 """,
-                (new_str, new_str, now, row["id"]),
+                (new_str, new_str, now, str(folder), str(folder)),
             )
             conn.commit()
             moved += 1
             if progress is not None:
                 progress["moved"] = moved
-            repository.log(conn, "info", f"Reorganized '{book_name}' → {target_range} ({chapter_count} ch)")
+            repository.log(conn, "info", f"Reorganized '{folder.name}' → {target_range} ({chapter_count} ch)")
         except Exception as exc:
-            errors.append(f"{book_name}: {exc}")
-            repository.log(conn, "error", f"Reorganize failed for '{book_name}': {exc}")
+            errors.append(f"{folder.name}: {exc}")
+            repository.log(conn, "error", f"Reorganize failed for '{folder.name}': {exc}")
 
     stopped_early = stop_event is not None and stop_event.is_set()
 
-    # Create/update range Komga libraries and scan them (skip if stopped early)
-    # Re-use komga_by_root (already fetched) to avoid extra list_libraries() calls
+    # Create/update range Komga libraries and scan them
     komga_created = 0
     komga_scanned = 0
     komga_errors: list[str] = []

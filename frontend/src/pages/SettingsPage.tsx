@@ -40,8 +40,19 @@ function FlushCard({ flushRunning, loading }: { flushRunning: boolean; loading: 
   const [tasks, setTasks] = useState<FlushTask[]>([]);
   const [everStarted, setEverStarted] = useState(false);
 
+  // Restore state on mount (page navigation doesn't lose progress)
+  useEffect(() => {
+    api.systemFlushStatus().then(s => {
+      if (s.tasks.some(t => t.status !== "pending")) {
+        setTasks(s.tasks);
+        setEverStarted(true);
+      }
+    }).catch(() => {});
+  }, []);
+
   useEffect(() => {
     if (!flushRunning) return;
+    setEverStarted(true);
     const interval = setInterval(async () => {
       try {
         const status = await api.systemFlushStatus();
@@ -223,8 +234,20 @@ function FullOrganizeCard({ running, loading }: { running: boolean; loading: boo
   const [subProg, setSubProg]   = useState<FullOrganizeStatus["subProgress"]>(null);
   const [everStarted, setEverStarted] = useState(false);
 
+  // Restore state on mount (page navigation doesn't lose progress)
+  useEffect(() => {
+    api.fullOrganizeStatus().then(s => {
+      if (s.tasks.some(t => t.status !== "pending")) {
+        setTasks(s.tasks);
+        setSubProg(s.subProgress);
+        setEverStarted(true);
+      }
+    }).catch(() => {});
+  }, []);
+
   useEffect(() => {
     if (!running) return;
+    setEverStarted(true);
     const iv = setInterval(async () => {
       try {
         const s = await api.fullOrganizeStatus();
