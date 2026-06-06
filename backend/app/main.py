@@ -185,9 +185,18 @@ _reorg_thread: threading.Thread | None = None
 _reorg_last_result: dict | None = None
 _reorg_lock = threading.Lock()
 
+_dedup_stop = threading.Event()
+_dedup_thread: threading.Thread | None = None
+_dedup_last_result: dict | None = None
+_dedup_lock = threading.Lock()
+
 
 def _reorg_running() -> bool:
     return _reorg_thread is not None and _reorg_thread.is_alive()
+
+
+def _dedup_running() -> bool:
+    return _dedup_thread is not None and _dedup_thread.is_alive()
 
 
 from .flush import SystemFlusher  # noqa: E402  (after module-level vars are defined)
@@ -292,6 +301,7 @@ def summary(_user: dict = Depends(authenticated_user)) -> dict:
     data["limitedScanActive"] = repository.get_setting(conn, "limited_scan_active", "0") == "1"
     data["scanRunning"] = scan_scheduler.scan_running
     data["reorganizeRunning"] = _reorg_running()
+    data["deduplicateRunning"] = _dedup_running()
     data["flushRunning"] = _flusher.running
     data["limitedScanActiveThreshold"] = int(repository.get_setting(conn, "limited_scan_active_threshold", "300") or "300")
     return data
@@ -824,6 +834,46 @@ def komga_cleanup_endpoint(_user: dict = Depends(authenticated_user)) -> dict:
         f"{result.get('komgaScanned', 0)} range libraries scanned",
     )
     return result
+
+
+@app.post("/api/library/deduplicate")
+def deduplicate_library_endpoint(_user: dict = Depends(authenticated_user)) -> dict:
+    global _dedup_thread, _dedup_last_result
+    from .library_organizer import deduplicate_library
+    with _dedup_lock:
+        if _dedup_running():
+            raise HTTPException(status_code=409, detail="deduplicate already running")
+        _dedup_stop.clear()
+        _dedup_last_result = None
+
+        def _run() -> None:
+            global _dedup_last_result
+            try:
+                _dedup_last_result = deduplicate_library(conn, settings.library_root, komga_client, _dedup_stop)
+                repository.log(
+                    conn, "info",
+                    f"Dedup finished: {_dedup_last_result.get('deleted', 0)} deleted, "
+                    f"{_dedup_last_result.get('chaptersTransferred', 0)} chapters transferred",
+                )
+            except Exception as exc:
+                _dedup_last_result = {"error": str(exc)}
+                repository.log(conn, "error", f"Dedup failed: {exc}")
+
+        _dedup_thread = threading.Thread(target=_run, name="library-deduplicate", daemon=True)
+        _dedup_thread.start()
+    return {"started": True, "running": True}
+
+
+@app.post("/api/library/deduplicate/stop")
+def stop_deduplicate(_user: dict = Depends(authenticated_user)) -> dict:
+    _dedup_stop.set()
+    repository.log(conn, "info", "Dedup stop requested")
+    return {"stopped": True}
+
+
+@app.get("/api/library/deduplicate/status")
+def deduplicate_status(_user: dict = Depends(authenticated_user)) -> dict:
+    return {"running": _dedup_running(), "result": _dedup_last_result}
 
 
 @app.post("/api/system/flush")

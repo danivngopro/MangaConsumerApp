@@ -14,6 +14,7 @@ export type Summary = {
   komgaAutoEnabled: boolean;
   reorganizeOnDrain: boolean;
   reorganizeRunning: boolean;
+  deduplicateRunning: boolean;
   flushRunning: boolean;
   limitedScanActiveThreshold: number;
   libraryRoot: string;
@@ -486,6 +487,12 @@ export const api = {
       "/api/library/komga-cleanup",
       { method: "POST" },
     ),
+  deduplicateLibrary: () =>
+    request<{ started: boolean; running: boolean }>("/api/library/deduplicate", { method: "POST" }),
+  deduplicateStop: () =>
+    request<{ stopped: boolean }>("/api/library/deduplicate/stop", { method: "POST" }),
+  deduplicateStatus: () =>
+    request<{ running: boolean; result: Record<string, unknown> | null }>("/api/library/deduplicate/status"),
   systemFlush: () => request<{ started: boolean }>("/api/system/flush", { method: "POST" }),
   systemFlushStop: () => request<{ stopped: boolean }>("/api/system/flush/stop", { method: "POST" }),
   systemFlushStatus: () => request<{ running: boolean; tasks: FlushTask[] }>("/api/system/flush/status"),

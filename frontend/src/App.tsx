@@ -55,6 +55,7 @@ const emptySummary: Summary = {
   komgaAutoEnabled: false,
   reorganizeOnDrain: false,
   reorganizeRunning: false,
+  deduplicateRunning: false,
   flushRunning: false,
   limitedScanActiveThreshold: 300,
   libraryRoot: "",

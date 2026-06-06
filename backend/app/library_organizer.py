@@ -7,6 +7,7 @@ import time
 from pathlib import Path
 
 from . import repository
+from .duplicates import title_similarity
 from .utils import sanitize_filename
 
 
@@ -83,8 +84,7 @@ def cleanup_per_book_libraries(
     komga_scanned = 0
     for _, _, range_name in CHAPTER_RANGES:
         range_dir = library_root / range_name
-        if not range_dir.exists():
-            continue
+        range_dir.mkdir(parents=True, exist_ok=True)
         try:
             library, created = komga_client.ensure_library_for_book(range_name)
             if created:
@@ -246,8 +246,7 @@ def reorganize_library(
     if komga_client.enabled and not stopped_early:
         for _, _, range_name in CHAPTER_RANGES:
             range_dir = library_root / range_name
-            if not range_dir.exists():
-                continue
+            range_dir.mkdir(parents=True, exist_ok=True)
             try:
                 library, created = komga_client.ensure_library_for_book(range_name)
                 if created:
@@ -274,4 +273,166 @@ def reorganize_library(
         "komgaScanned": komga_scanned,
         "errors": errors,
         "komgaErrors": komga_errors,
+    }
+
+
+def deduplicate_library(
+    conn: sqlite3.Connection,
+    library_root: Path,
+    komga_client,
+    stop_event: threading.Event | None = None,
+    threshold: float = 0.82,
+) -> dict:
+    """
+    Find all books with similar titles across all range directories and root level.
+    Keep the copy with the most chapters (transferring unique chapters from others first),
+    then delete the duplicate folders and their per-book Komga libraries.
+    """
+    from .library import _iter_book_folders, extract_chapter_key, COMIC_EXTENSIONS
+
+    # Collect all book folders with chapter counts
+    books: list[dict] = []
+    for folder in _iter_book_folders(library_root):
+        comic_files = [
+            f for f in folder.rglob("*")
+            if f.is_file() and f.suffix.lower() in COMIC_EXTENSIONS
+        ]
+        chapter_keys: list[str] = []
+        for cf in comic_files:
+            key = extract_chapter_key(cf.name)
+            if key:
+                chapter_keys.append(key)
+        if not chapter_keys:
+            chapter_keys = [str(i + 1) for i, _ in enumerate(comic_files)]
+        books.append({
+            "title": folder.name,
+            "folder": folder,
+            "chapter_count": len(set(chapter_keys)),
+        })
+
+    n = len(books)
+
+    # Union-find to cluster similar titles
+    parent = list(range(n))
+
+    def find(x: int) -> int:
+        while parent[x] != x:
+            parent[x] = parent[parent[x]]
+            x = parent[x]
+        return x
+
+    def union(x: int, y: int) -> None:
+        parent[find(x)] = find(y)
+
+    for i in range(n):
+        if stop_event and stop_event.is_set():
+            break
+        for j in range(i + 1, n):
+            score, _ = title_similarity(books[i]["title"], books[j]["title"])
+            if score >= threshold:
+                union(i, j)
+
+    groups: dict[int, list[int]] = {}
+    for i in range(n):
+        groups.setdefault(find(i), []).append(i)
+
+    # Folders with active downloads are untouchable
+    active_folders: set[Path] = set()
+    for row in conn.execute(
+        """
+        SELECT m.local_folder FROM manga m
+        JOIN jobs j ON j.manga_id = m.id
+        WHERE j.status IN ('queued', 'running') AND m.local_folder IS NOT NULL
+        """
+    ).fetchall():
+        if row["local_folder"]:
+            active_folders.add(Path(row["local_folder"]))
+
+    deleted = 0
+    chapters_transferred = 0
+    skipped_active = 0
+    errors: list[str] = []
+
+    for group_indices in groups.values():
+        if len(group_indices) <= 1:
+            continue
+        if stop_event and stop_event.is_set():
+            break
+
+        group = [books[i] for i in group_indices]
+
+        if any(b["folder"] in active_folders for b in group):
+            skipped_active += len(group) - 1
+            continue
+
+        # Keep the book with the most chapters; break ties by preferring shorter folder name
+        group.sort(key=lambda b: (-b["chapter_count"], len(b["title"])))
+        keeper = group[0]
+        duplicates = group[1:]
+
+        for dup in duplicates:
+            # Transfer chapters the keeper is missing before deleting
+            if dup["folder"].exists() and keeper["folder"].exists():
+                try:
+                    from .library import transfer_chapters
+                    transferred = transfer_chapters(dup["folder"], keeper["folder"])
+                    chapters_transferred += transferred
+                except Exception as exc:
+                    repository.log(conn, "warning", f"Chapter transfer {dup['folder'].name} → {keeper['folder'].name}: {exc}")
+
+            # Remove per-book Komga library (no-op if already in a range lib)
+            if komga_client.enabled:
+                try:
+                    komga_client.delete_library_for_book(dup["folder"].name)
+                except Exception:
+                    pass
+
+            # Delete the folder
+            try:
+                if dup["folder"].exists():
+                    shutil.rmtree(dup["folder"])
+                    deleted += 1
+                    repository.log(
+                        conn, "info",
+                        f"Dedup: deleted '{dup['folder'].name}' ({dup['chapter_count']} ch) "
+                        f"→ kept '{keeper['folder'].name}' ({keeper['chapter_count']} ch)",
+                    )
+            except Exception as exc:
+                errors.append(f"{dup['folder'].name}: {exc}")
+
+            # Clear stale DB reference
+            try:
+                conn.execute(
+                    "UPDATE manga SET local_folder = NULL, download_folder_override = NULL, updated_at = ? WHERE local_folder = ?",
+                    (repository.utc_now(), str(dup["folder"])),
+                )
+            except Exception:
+                pass
+
+        conn.commit()
+
+    # Rescan range libraries so Komga reflects the deletions
+    if komga_client.enabled and not (stop_event and stop_event.is_set()):
+        for _, _, range_name in CHAPTER_RANGES:
+            range_dir = library_root / range_name
+            if not range_dir.exists():
+                continue
+            try:
+                library, created = komga_client.ensure_library_for_book(range_name)
+                if created:
+                    time.sleep(1)
+                komga_client.quick_scan_library(str(library["id"]))
+            except Exception as exc:
+                errors.append(f"scan {range_name}: {exc}")
+
+    repository.log(
+        conn, "info",
+        f"Dedup: {deleted} duplicate folders deleted, {chapters_transferred} chapters transferred, "
+        f"{skipped_active} skipped (active download)",
+    )
+    return {
+        "deleted": deleted,
+        "chaptersTransferred": chapters_transferred,
+        "skippedActive": skipped_active,
+        "errors": errors,
     }

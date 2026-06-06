@@ -1,5 +1,5 @@
 import { FormEvent, useEffect, useState } from "react";
-import { FolderSync, Wrench, Square, Zap, CheckCircle2, XCircle, Loader, Clock, Ban } from "lucide-react";
+import { FolderSync, GitMerge, Wrench, Square, Zap, CheckCircle2, XCircle, Loader, Clock, Ban } from "lucide-react";
 import { api, FlushTask } from "../api";
 import { StatCard } from "../components/shared";
 import type { SharedProps } from "../App";
@@ -383,6 +383,24 @@ export function SettingsPage({ summary, loading, runAction }: SharedProps) {
               >
                 <Wrench size={13} /> Fix Komga libraries
               </button>
+              {summary.deduplicateRunning ? (
+                <button
+                  className="btn-ghost btn-sm danger"
+                  onClick={() => runAction("Stop deduplication", api.deduplicateStop)}
+                  disabled={loading}
+                >
+                  <Square size={13} /> Stop dedup
+                </button>
+              ) : (
+                <button
+                  className="btn-ghost btn-sm"
+                  title="Find duplicate books (same/similar title) across all range folders and keep the one with the most chapters"
+                  onClick={() => runAction("Deduplicate library", api.deduplicateLibrary)}
+                  disabled={loading || summary.reorganizeRunning}
+                >
+                  <GitMerge size={13} /> Deduplicate books
+                </button>
+              )}
             </div>
           </div>
         </div>
