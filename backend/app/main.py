@@ -99,6 +99,14 @@ class LocalBrowseRequest(BaseModel):
     offset: int = 0
 
 
+class ReadThroughChapterRequest(BaseModel):
+    chapterNumber: float
+
+
+class LowProgressUnreadRequest(BaseModel):
+    minimumReadOrReading: int = 30
+
+
 settings = load_settings()
 settings.app_data_dir.mkdir(parents=True, exist_ok=True)
 db_path = settings.app_data_dir / "manga-recoverer.sqlite3"
@@ -1062,6 +1070,65 @@ def import_book_to_komga(manga_id: int, _user: dict = Depends(authenticated_user
     except Exception as exc:
         repository.update_komga_status(conn, manga_id, None, False, False, str(exc))
         repository.log(conn, "error", f"Manual Komga import failed for {row['title']}: {exc}")
+        raise HTTPException(status_code=502, detail=str(exc)) from exc
+
+
+@app.post("/api/komga/books/{manga_id}/read-through")
+def mark_book_read_through(manga_id: int, payload: ReadThroughChapterRequest, _user: dict = Depends(authenticated_user)) -> dict:
+    row = conn.execute("SELECT title, komga_series_id FROM manga WHERE id = ?", (manga_id,)).fetchone()
+    if row is None:
+        raise HTTPException(status_code=404, detail="manga not found")
+    series_id = str(row["komga_series_id"] or "").strip()
+    if not series_id:
+        raise HTTPException(status_code=400, detail="book is not linked to a Komga series")
+    try:
+        books = komga_client.list_books_for_series(series_id)
+        marked = komga_client.mark_books_read_through_chapter(books, float(payload.chapterNumber))
+        repository.log(conn, "info", f"Marked {marked} Komga chapters read for {row['title']} through chapter {payload.chapterNumber:g}")
+        return {"marked": marked, "mangaId": manga_id, "chapterNumber": payload.chapterNumber}
+    except Exception as exc:
+        repository.log(conn, "error", f"Komga read-through failed for {row['title']}: {exc}")
+        raise HTTPException(status_code=502, detail=str(exc)) from exc
+
+
+@app.post("/api/komga/read-progress/unread-all")
+def mark_all_komga_unread(_user: dict = Depends(authenticated_user)) -> dict:
+    if not komga_client.enabled:
+        raise HTTPException(status_code=400, detail="Komga is not configured")
+    series_ids = repository.list_komga_series_ids(conn)
+    marked = 0
+    errors: list[str] = []
+    for series_id in series_ids:
+        try:
+            komga_client.mark_series_unread(series_id)
+            marked += 1
+        except Exception as exc:
+            errors.append(f"{series_id}: {exc}")
+    repository.log(conn, "info", f"Marked {marked}/{len(series_ids)} Komga series unread")
+    if errors:
+        raise HTTPException(status_code=502, detail={"markedSeries": marked, "errors": errors})
+    return {"markedSeries": marked, "totalSeries": len(series_ids)}
+
+
+@app.post("/api/komga/read-progress/unread-low-progress")
+def mark_low_progress_komga_unread(payload: LowProgressUnreadRequest | None = None, _user: dict = Depends(authenticated_user)) -> dict:
+    if not komga_client.enabled:
+        raise HTTPException(status_code=400, detail="Komga is not configured")
+    minimum = max(1, int(payload.minimumReadOrReading if payload else 30))
+    try:
+        result = komga_client.mark_low_progress_series_unread(minimum)
+        repository.log(
+            conn,
+            "info",
+            f"Marked {result['seriesMarkedUnread']}/{result['seriesChecked']} Komga series unread with fewer than {minimum} read/reading chapters",
+        )
+        if result["errors"]:
+            raise HTTPException(status_code=502, detail=result)
+        return result
+    except HTTPException:
+        raise
+    except Exception as exc:
+        repository.log(conn, "error", f"Komga low-progress unread failed: {exc}")
         raise HTTPException(status_code=502, detail=str(exc)) from exc
 
 

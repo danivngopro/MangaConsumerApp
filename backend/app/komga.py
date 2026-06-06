@@ -148,6 +148,65 @@ class KomgaClient:
         )
         response.raise_for_status()
 
+    def mark_series_unread(self, series_id: str) -> None:
+        response = self.session.delete(
+            f"{self.settings.url}/api/v1/series/{series_id}/read-progress",
+            timeout=30,
+        )
+        response.raise_for_status()
+
+    def mark_book_read(self, book_id: str) -> None:
+        response = self.session.patch(
+            f"{self.settings.url}/api/v1/books/{book_id}/read-progress",
+            json={"completed": True, "page": 0},
+            timeout=30,
+        )
+        response.raise_for_status()
+
+    def mark_books_read_through_chapter(self, books: list[dict], chapter_number: float) -> int:
+        marked = 0
+        for book in sorted(books, key=_book_number):
+            book_id = book.get("id")
+            if not book_id or _book_number(book) > chapter_number:
+                continue
+            self.mark_book_read(str(book_id))
+            marked += 1
+        return marked
+
+    def mark_low_progress_series_unread(self, minimum_read_or_reading: int = 30) -> dict:
+        libraries = self.list_libraries()
+        series_checked = 0
+        series_marked = 0
+        errors: list[str] = []
+        for library in libraries:
+            library_id = str(library.get("id") or "")
+            if not library_id:
+                continue
+            try:
+                series_list = self.list_series_for_library(library_id)
+            except Exception as exc:
+                errors.append(f"library {library_id}: {exc}")
+                continue
+            for series in sorted(series_list, key=lambda item: str(item.get("id") or "")):
+                series_id = str(series.get("id") or "")
+                if not series_id:
+                    continue
+                series_checked += 1
+                try:
+                    books = self.list_books_for_series(series_id)
+                    active_count = sum(1 for book in books if _has_read_progress(book))
+                    if active_count < minimum_read_or_reading:
+                        self.mark_series_unread(series_id)
+                        series_marked += 1
+                except Exception as exc:
+                    errors.append(f"series {series_id}: {exc}")
+        return {
+            "libraries": len(libraries),
+            "seriesChecked": series_checked,
+            "seriesMarkedUnread": series_marked,
+            "errors": errors,
+        }
+
     def list_books_for_series(self, series_id: str) -> list[dict]:
         payload = {"condition": {"seriesId": {"value": series_id}}}
         try:

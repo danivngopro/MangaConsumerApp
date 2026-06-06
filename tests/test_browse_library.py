@@ -3,7 +3,7 @@ import unittest
 
 from backend.app import repository
 from backend.app.database import init_db
-from backend.app.komga import latest_read_book, komga_book_url
+from backend.app.komga import KomgaClient, KomgaSettings, latest_read_book, komga_book_url
 
 
 class BrowseLibraryTests(unittest.TestCase):
@@ -107,6 +107,134 @@ class BrowseLibraryTests(unittest.TestCase):
             komga_book_url("https://komga.emperordanivn.com", "0NR552YX3MQME"),
             "https://komga.emperordanivn.com/book/0NR552YX3MQME",
         )
+
+    def test_komga_client_marks_series_unread(self):
+        client = KomgaClient(KomgaSettings("https://komga.test", "", "", "/books"))
+        session = FakeKomgaSession()
+        client.session = session
+
+        client.mark_series_unread("series-1")
+
+        self.assertEqual(session.calls, [("DELETE", "https://komga.test/api/v1/series/series-1/read-progress", None)])
+
+    def test_komga_client_marks_books_read_through_chapter_including_intro_and_zero(self):
+        client = KomgaClient(KomgaSettings("https://komga.test", "", "", "/books"))
+        session = FakeKomgaSession()
+        client.session = session
+
+        marked = client.mark_books_read_through_chapter(
+            [
+                {"id": "intro", "name": "Intro", "metadata": {"title": "Intro"}},
+                {"id": "zero", "name": "Chapter 0", "metadata": {"numberSort": 0}},
+                {"id": "one", "name": "Chapter 1", "metadata": {"numberSort": 1}},
+                {"id": "two", "name": "Chapter 2", "metadata": {"numberSort": 2}},
+            ],
+            1,
+        )
+
+        self.assertEqual(marked, 3)
+        self.assertEqual(
+            session.calls,
+            [
+                ("PATCH", "https://komga.test/api/v1/books/intro/read-progress", {"completed": True, "page": 0}),
+                ("PATCH", "https://komga.test/api/v1/books/zero/read-progress", {"completed": True, "page": 0}),
+                ("PATCH", "https://komga.test/api/v1/books/one/read-progress", {"completed": True, "page": 0}),
+            ],
+        )
+
+    def test_komga_client_marks_low_progress_series_unread_across_libraries(self):
+        client = KomgaClient(KomgaSettings("https://komga.test", "", "", "/books"))
+        session = FakeKomgaSession()
+        session.libraries = [{"id": "library-1"}, {"id": "library-2"}]
+        session.series_by_library = {
+            "library-1": [{"id": "low"}, {"id": "enough"}],
+            "library-2": [{"id": "empty"}],
+        }
+        session.books_by_series = {
+            "low": [
+                *[
+                    {"id": f"low-read-{index}", "readStatus": "READ", "readProgress": {"completed": True}}
+                    for index in range(12)
+                ],
+                *[
+                    {"id": f"low-progress-{index}", "readStatus": "IN_PROGRESS", "readProgress": {"page": 3}}
+                    for index in range(8)
+                ],
+                {"id": "low-unread", "readStatus": "UNREAD", "readProgress": None},
+            ],
+            "enough": [
+                {"id": f"enough-read-{index}", "readStatus": "READ", "readProgress": {"completed": True}}
+                for index in range(30)
+            ],
+            "empty": [
+                {"id": "empty-unread", "readStatus": "UNREAD", "readProgress": None},
+            ],
+        }
+        client.session = session
+
+        result = client.mark_low_progress_series_unread(30)
+
+        self.assertEqual(
+            result,
+            {
+                "libraries": 2,
+                "seriesChecked": 3,
+                "seriesMarkedUnread": 2,
+                "errors": [],
+            },
+        )
+        self.assertEqual(
+            sorted(call[1] for call in session.calls if call[0] == "DELETE"),
+            [
+                "https://komga.test/api/v1/series/empty/read-progress",
+                "https://komga.test/api/v1/series/low/read-progress",
+            ],
+        )
+
+
+class FakeKomgaResponse:
+    data: dict | list = {}
+
+    def raise_for_status(self) -> None:
+        return None
+
+    def json(self) -> dict | list:
+        return self.data
+
+
+class FakeKomgaSession:
+    def __init__(self) -> None:
+        self.calls: list[tuple[str, str, dict | None]] = []
+        self.libraries: list[dict] = []
+        self.series_by_library: dict[str, list[dict]] = {}
+        self.books_by_series: dict[str, list[dict]] = {}
+
+    def get(self, url: str, params: dict | None = None, timeout: int = 30) -> FakeKomgaResponse:
+        self.calls.append(("GET", url, params))
+        response = FakeKomgaResponse()
+        response.data = self.libraries
+        return response
+
+    def post(self, url: str, json: dict | None = None, params: dict | None = None, timeout: int = 30) -> FakeKomgaResponse:
+        self.calls.append(("POST", url, json))
+        response = FakeKomgaResponse()
+        if url.endswith("/api/v1/series/list?unpaged=true"):
+            library_id = str(((json or {}).get("condition") or {}).get("libraryId", {}).get("value") or "")
+            response.data = {"content": self.series_by_library.get(library_id, [])}
+        elif url.endswith("/api/v1/books/list"):
+            series_id = str(((json or {}).get("condition") or {}).get("seriesId", {}).get("value") or "")
+            response.data = {"content": self.books_by_series.get(series_id, [])}
+        else:
+            response.data = {}
+        return response
+
+    def delete(self, url: str, timeout: int) -> FakeKomgaResponse:
+        self.calls.append(("DELETE", url, None))
+        return FakeKomgaResponse()
+
+    def patch(self, url: str, json: dict, timeout: int) -> FakeKomgaResponse:
+        self.calls.append(("PATCH", url, json))
+        return FakeKomgaResponse()
 
 
 if __name__ == "__main__":

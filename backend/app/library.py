@@ -38,6 +38,20 @@ def _preferred_by_asura(conn: sqlite3.Connection, a: dict, b: dict) -> tuple[dic
     return a, b
 
 
+def _iter_book_folders(library_root: Path):
+    """Yield book folders from library_root, descending into range subdirectories."""
+    from .library_organizer import RANGE_NAMES
+    for item in sorted(library_root.iterdir()):
+        if not item.is_dir():
+            continue
+        if item.name in RANGE_NAMES:
+            for sub in sorted(item.iterdir()):
+                if sub.is_dir():
+                    yield sub
+        else:
+            yield item
+
+
 def scan_library(conn: sqlite3.Connection, library_root: Path) -> dict:
     if not library_root.exists():
         repository.log(conn, "error", f"Library root does not exist: {library_root}")
@@ -50,7 +64,7 @@ def scan_library(conn: sqlite3.Connection, library_root: Path) -> dict:
     comic_files_seen = 0
     scanned_items: list[dict] = []
 
-    for folder in sorted([item for item in library_root.iterdir() if item.is_dir()]):
+    for folder in _iter_book_folders(library_root):
         folders_seen += 1
         comic_files = [
             item

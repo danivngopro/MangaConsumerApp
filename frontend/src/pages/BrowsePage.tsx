@@ -1,5 +1,5 @@
 import { FormEvent, useEffect, useMemo, useState } from "react";
-import { BookOpen, ExternalLink, Filter, Library, Play, Search, X } from "lucide-react";
+import { BookCheck, BookOpen, ExternalLink, Filter, Library, Play, RotateCcw, Search, X } from "lucide-react";
 import { api, Book, BrowseFilters, BookDetail, LocalBrowsePayload } from "../api";
 import { StatCard } from "../components/shared";
 import type { SharedProps } from "../App";
@@ -69,6 +69,44 @@ export function BrowsePage({ browseFilters, summary, loading }: Props) {
     }
   }
 
+  async function refreshSelected(mangaId: number) {
+    setSelected(await api.bookDetail(mangaId));
+  }
+
+  async function markAllUnread() {
+    if (!window.confirm("Mark every linked Komga series in this library as unread?")) return;
+    setBusy(true);
+    setStatusText("Marking all Komga chapters unread...");
+    try {
+      const result = await api.markAllKomgaUnread();
+      setStatusText(`Marked ${result.markedSeries} Komga series unread`);
+      if (selected) {
+        await refreshSelected(selected.id);
+      }
+    } catch (error) {
+      setStatusText(error instanceof Error ? error.message : String(error));
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function markLowProgressUnread() {
+    if (!window.confirm("For every Komga library, mark any series with fewer than 30 read or reading chapters as unread?")) return;
+    setBusy(true);
+    setStatusText("Checking Komga read progress...");
+    try {
+      const result = await api.markLowProgressKomgaUnread(30);
+      setStatusText(`Marked ${result.seriesMarkedUnread} of ${result.seriesChecked} Komga series unread`);
+      if (selected) {
+        await refreshSelected(selected.id);
+      }
+    } catch (error) {
+      setStatusText(error instanceof Error ? error.message : String(error));
+    } finally {
+      setBusy(false);
+    }
+  }
+
   function toggleGenre(slug: string) {
     setGenres((current) => (
       current.includes(slug) ? current.filter((item) => item !== slug) : [...current, slug]
@@ -95,6 +133,14 @@ export function BrowsePage({ browseFilters, summary, loading }: Props) {
           <h2>Browse</h2>
           {statusText && <span className="tag tag-purple">{statusText}</span>}
           {activeFilters.length > 0 && <span className="tag tag-yellow">{activeFilters.join(" / ")}</span>}
+        </div>
+        <div className="page-actions">
+          <button type="button" className="btn-ghost" disabled={busy || loading} onClick={markLowProgressUnread}>
+            <RotateCcw size={14} /> Unread if &lt;30 active
+          </button>
+          <button type="button" className="btn-ghost" disabled={busy || loading} onClick={markAllUnread}>
+            <RotateCcw size={14} /> Mark all unread
+          </button>
         </div>
       </div>
 
@@ -186,6 +232,7 @@ export function BrowsePage({ browseFilters, summary, loading }: Props) {
           loading={detailLoading}
           chapterPage={chapterPage}
           setChapterPage={setChapterPage}
+          onBookChanged={refreshSelected}
           onClose={() => setSelected(null)}
         />
       )}
@@ -199,6 +246,7 @@ function BookModal({
   loading,
   chapterPage,
   setChapterPage,
+  onBookChanged,
   onClose,
 }: {
   book: BookDetail | null;
@@ -206,8 +254,12 @@ function BookModal({
   loading: boolean;
   chapterPage: number;
   setChapterPage: (page: number) => void;
+  onBookChanged: (mangaId: number) => Promise<void>;
   onClose: () => void;
 }) {
+  const [readThroughChapter, setReadThroughChapter] = useState("");
+  const [readThroughBusy, setReadThroughBusy] = useState(false);
+  const [readThroughStatus, setReadThroughStatus] = useState("");
   const chapters = book?.chapters ?? [];
   const chapterPages = Math.max(1, Math.ceil(chapters.length / CHAPTER_PAGE_SIZE));
   const pageChapters = useMemo(
@@ -215,6 +267,27 @@ function BookModal({
     [chapters, chapterPage],
   );
   const komgaSeriesUrl = book?.komga_series_id && komgaUrl ? `${komgaUrl.replace(/\/$/, "")}/series/${book.komga_series_id}` : null;
+
+  async function markReadThrough(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    if (!book) return;
+    const chapterNumber = Number(readThroughChapter);
+    if (!Number.isFinite(chapterNumber) || readThroughChapter.trim() === "") {
+      setReadThroughStatus("Enter a chapter number.");
+      return;
+    }
+    setReadThroughBusy(true);
+    setReadThroughStatus("Marking chapters read...");
+    try {
+      const result = await api.markBookReadThrough(book.id, chapterNumber);
+      setReadThroughStatus(`Marked ${result.marked} chapters read`);
+      await onBookChanged(book.id);
+    } catch (error) {
+      setReadThroughStatus(error instanceof Error ? error.message : String(error));
+    } finally {
+      setReadThroughBusy(false);
+    }
+  }
 
   return (
     <div className="backdrop" onClick={onClose}>
@@ -286,6 +359,23 @@ function BookModal({
                   <button className="btn-ghost btn-sm" disabled={chapterPage + 1 >= chapterPages} onClick={() => setChapterPage(chapterPage + 1)}>Next</button>
                 </div>
               </div>
+              <form className="chapter-read-tools" onSubmit={markReadThrough}>
+                <label>
+                  <span>Read through</span>
+                  <input
+                    type="number"
+                    step="0.1"
+                    value={readThroughChapter}
+                    onChange={(event) => setReadThroughChapter(event.target.value)}
+                    placeholder="Chapter"
+                    disabled={!book.komga_series_id || readThroughBusy}
+                  />
+                </label>
+                <button className="btn-primary btn-sm" disabled={!book.komga_series_id || readThroughBusy}>
+                  <BookCheck size={13} /> Mark read
+                </button>
+                {readThroughStatus && <span className="muted">{readThroughStatus}</span>}
+              </form>
               <div className="chapter-list">
                 {pageChapters.map((chapter) => (
                   <a key={chapter.id} className="chapter-link" href={chapter.komga_url || komgaSeriesUrl || book.url} target="_blank" rel="noreferrer">

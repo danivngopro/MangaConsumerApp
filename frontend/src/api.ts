@@ -533,6 +533,32 @@ export const api = {
       libraryId: string;
       title: string;
     }>(`/api/komga/books/${mangaId}/import`, { method: "POST" }),
+  markBookReadThrough: (mangaId: number, chapterNumber: number) =>
+    request<{ marked: number; mangaId: number; chapterNumber: number }>(
+      `/api/komga/books/${mangaId}/read-through`,
+      {
+        method: "POST",
+        body: JSON.stringify({ chapterNumber }),
+      },
+    ),
+  markAllKomgaUnread: () =>
+    request<{ markedSeries: number; totalSeries: number }>(
+      "/api/komga/read-progress/unread-all",
+      { method: "POST" },
+    ),
+  markLowProgressKomgaUnread: (minimumReadOrReading = 30) =>
+    request<{
+      libraries: number;
+      seriesChecked: number;
+      seriesMarkedUnread: number;
+      errors: string[];
+    }>(
+      "/api/komga/read-progress/unread-low-progress",
+      {
+        method: "POST",
+        body: JSON.stringify({ minimumReadOrReading }),
+      },
+    ),
   quickScanAll: () =>
     request<{ scanned: boolean; libraryCount: number; deep: boolean }>(
       "/api/komga/quick-scan-all",

@@ -480,6 +480,21 @@ def list_browse_books(
     return {"items": items[offset:offset + limit], "total": total, "limit": limit, "offset": offset}
 
 
+def list_komga_series_ids(conn: sqlite3.Connection) -> list[str]:
+    return [
+        str(row["komga_series_id"])
+        for row in conn.execute(
+            """
+            SELECT DISTINCT komga_series_id
+            FROM manga
+            WHERE komga_series_id IS NOT NULL
+              AND TRIM(komga_series_id) != ''
+            ORDER BY komga_series_id
+            """
+        ).fetchall()
+    ]
+
+
 def upsert_chapters(conn: sqlite3.Connection, manga_id: int, chapters: Iterable[dict]) -> None:
     now = utc_now()
     chapters_list = []
