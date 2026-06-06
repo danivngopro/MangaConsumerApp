@@ -8,6 +8,160 @@ from .library import scan_library
 from .metadata_sync import sync_manga_metadata_to_komga
 
 
+# ── Full Library Organizer ─────────────────────────────────────────────────────
+
+_ORGANIZE_STEPS = [
+    ("reorganize",  "Reorganize by chapters"),
+    ("cleanup",     "Fix Komga libraries"),
+    ("deduplicate", "Deduplicate books"),
+    ("komga_scan",  "Komga scan"),
+]
+
+
+class LibraryOrganizer:
+    def __init__(self) -> None:
+        self._lock = threading.Lock()
+        self._thread: threading.Thread | None = None
+        self._tasks: list[dict] = self._fresh_tasks()
+        self._stop_requested = False
+        self._sub_progress: dict = {}
+        self._started_at: str = ""
+
+    @property
+    def running(self) -> bool:
+        return self._thread is not None and self._thread.is_alive()
+
+    def _fresh_tasks(self) -> list[dict]:
+        return [
+            {"id": tid, "label": label, "status": "pending", "detail": ""}
+            for tid, label in _ORGANIZE_STEPS
+        ]
+
+    def start(self, *, conn: sqlite3.Connection, settings, komga_client) -> bool:
+        with self._lock:
+            if self.running:
+                return False
+            from datetime import datetime, timezone
+            self._stop_requested = False
+            self._started_at = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+            self._tasks = self._fresh_tasks()
+            self._sub_progress.clear()
+            self._thread = threading.Thread(
+                target=self._run,
+                kwargs=dict(conn=conn, settings=settings, komga_client=komga_client),
+                name="library-full-organize",
+                daemon=True,
+            )
+            self._thread.start()
+            return True
+
+    def stop(self) -> None:
+        self._stop_requested = True
+
+    def status(self) -> dict:
+        return {
+            "running": self.running,
+            "tasks": list(self._tasks),
+            "subProgress": dict(self._sub_progress) if self.running else None,
+        }
+
+    def _set(self, task_id: str, status: str, detail: str = "") -> None:
+        for t in self._tasks:
+            if t["id"] == task_id:
+                t["status"] = status
+                t["detail"] = detail
+
+    def _cancel_remaining(self) -> None:
+        for t in self._tasks:
+            if t["status"] == "pending":
+                t["status"] = "cancelled"
+                t["detail"] = "stopped"
+
+    def _run(self, *, conn: sqlite3.Connection, settings, komga_client) -> None:
+        from .library_organizer import reorganize_library, cleanup_per_book_libraries, deduplicate_library
+
+        # ── Step 1: Reorganize ────────────────────────────────────────────────
+        self._sub_progress.clear()
+        self._set("reorganize", "running", "Moving books into range folders…")
+        try:
+            result = reorganize_library(
+                conn, settings.library_root, komga_client,
+                stop_event=None, progress=self._sub_progress,
+            )
+            self._set("reorganize", "done", f"{result['moved']} moved · {result['skipped']} already correct")
+        except Exception as exc:
+            self._set("reorganize", "error", str(exc))
+        if self._stop_requested:
+            return self._cancel_remaining()
+
+        # ── Step 2: Cleanup ───────────────────────────────────────────────────
+        self._sub_progress.clear()
+        self._set("cleanup", "running", "Removing per-book Komga libraries…")
+        try:
+            result = cleanup_per_book_libraries(conn, settings.library_root, komga_client)
+            self._set("cleanup", "done", f"{result['deleted']} libraries deleted · {result['komgaScanned']} ranges scanned")
+        except Exception as exc:
+            self._set("cleanup", "error", str(exc))
+        if self._stop_requested:
+            return self._cancel_remaining()
+
+        # ── Step 3: Deduplicate ───────────────────────────────────────────────
+        self._sub_progress.clear()
+        self._set("deduplicate", "running", "Scanning for duplicates…")
+        try:
+            result = deduplicate_library(
+                conn, settings.library_root, komga_client,
+                stop_event=None, progress=self._sub_progress,
+            )
+            detail = f"{result['deleted']} duplicates removed"
+            if result['chaptersTransferred']:
+                detail += f" · {result['chaptersTransferred']} chapters transferred"
+            self._set("deduplicate", "done", detail)
+        except Exception as exc:
+            self._set("deduplicate", "error", str(exc))
+        if self._stop_requested:
+            return self._cancel_remaining()
+
+        # ── Step 4: Wait for Komga to finish indexing ─────────────────────────
+        import time
+        from .library_organizer import RANGE_NAMES
+
+        self._sub_progress.clear()
+        if not komga_client.enabled:
+            self._set("komga_scan", "done", "Komga not configured — skipped")
+        else:
+            self._set("komga_scan", "running", "Waiting for Komga to finish indexing…")
+            time.sleep(3)  # give Komga a moment to enqueue scan jobs
+
+            timeout_sec = 300
+            deadline = time.time() + timeout_sec
+            done_count = total_count = 0
+
+            while time.time() < deadline and not self._stop_requested:
+                done_count, total_count = komga_client.range_libs_scan_status(
+                    set(RANGE_NAMES), self._started_at
+                )
+                self._sub_progress.update({
+                    "total": max(total_count, 1),
+                    "processed": done_count,
+                    "current": f"{done_count} of {total_count} range libraries indexed",
+                })
+                if total_count > 0 and done_count >= total_count:
+                    break
+                time.sleep(5)
+
+            if self._stop_requested:
+                self._set("komga_scan", "cancelled", "stopped")
+            elif total_count == 0:
+                self._set("komga_scan", "done", "No range libraries found in Komga")
+            elif done_count >= total_count:
+                self._set("komga_scan", "done", f"All {total_count} range libraries indexed")
+            else:
+                self._set("komga_scan", "done", f"{done_count}/{total_count} indexed (timed out after 5 min)")
+
+        repository.log(conn, "info", "Full library organize complete")
+
+
 _TASK_DEFS = [
     ("stop",     "Pause queue & clear pending jobs"),
     ("settings", "Apply recommended settings"),

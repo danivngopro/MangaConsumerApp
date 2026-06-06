@@ -57,6 +57,7 @@ const emptySummary: Summary = {
   reorganizeRunning: false,
   deduplicateRunning: false,
   flushRunning: false,
+  fullOrganizeRunning: false,
   limitedScanActiveThreshold: 300,
   libraryRoot: "",
   komgaUrl: "",

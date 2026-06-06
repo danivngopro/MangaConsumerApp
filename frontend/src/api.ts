@@ -16,6 +16,7 @@ export type Summary = {
   reorganizeRunning: boolean;
   deduplicateRunning: boolean;
   flushRunning: boolean;
+  fullOrganizeRunning: boolean;
   limitedScanActiveThreshold: number;
   libraryRoot: string;
   komgaUrl: string;
@@ -233,6 +234,26 @@ export type FlushTask = {
   label: string;
   status: FlushTaskStatus;
   detail: string;
+};
+
+export type OrganizerTask = {
+  id: string;
+  label: string;
+  status: FlushTaskStatus;
+  detail: string;
+};
+
+export type FullOrganizeStatus = {
+  running: boolean;
+  tasks: OrganizerTask[];
+  subProgress: {
+    total?: number;
+    processed?: number;
+    moved?: number;
+    deleted?: number;
+    current?: string;
+    phase?: string;
+  } | null;
 };
 
 export type MetadataCandidate = Book & {
@@ -493,6 +514,9 @@ export const api = {
     request<{ stopped: boolean }>("/api/library/deduplicate/stop", { method: "POST" }),
   deduplicateStatus: () =>
     request<{ running: boolean; result: Record<string, unknown> | null; progress: { phase: string; total: number; processed: number; deleted: number; current: string } | null }>("/api/library/deduplicate/status"),
+  fullOrganizeStart: () => request<{ started: boolean }>("/api/library/full-organize", { method: "POST" }),
+  fullOrganizeStop: () => request<{ stopped: boolean }>("/api/library/full-organize/stop", { method: "POST" }),
+  fullOrganizeStatus: () => request<FullOrganizeStatus>("/api/library/full-organize/status"),
   systemFlush: () => request<{ started: boolean }>("/api/system/flush", { method: "POST" }),
   systemFlushStop: () => request<{ stopped: boolean }>("/api/system/flush/stop", { method: "POST" }),
   systemFlushStatus: () => request<{ running: boolean; tasks: FlushTask[] }>("/api/system/flush/status"),

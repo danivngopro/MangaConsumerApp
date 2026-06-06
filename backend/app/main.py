@@ -201,8 +201,9 @@ def _dedup_running() -> bool:
     return _dedup_thread is not None and _dedup_thread.is_alive()
 
 
-from .flush import SystemFlusher  # noqa: E402  (after module-level vars are defined)
+from .flush import SystemFlusher, LibraryOrganizer  # noqa: E402  (after module-level vars are defined)
 _flusher = SystemFlusher()
+_organizer = LibraryOrganizer()
 
 app = FastAPI(title="Manga Crawler")
 app.add_middleware(
@@ -305,6 +306,7 @@ def summary(_user: dict = Depends(authenticated_user)) -> dict:
     data["reorganizeRunning"] = _reorg_running()
     data["deduplicateRunning"] = _dedup_running()
     data["flushRunning"] = _flusher.running
+    data["fullOrganizeRunning"] = _organizer.running
     data["limitedScanActiveThreshold"] = int(repository.get_setting(conn, "limited_scan_active_threshold", "300") or "300")
     return data
 
@@ -878,6 +880,27 @@ def stop_deduplicate(_user: dict = Depends(authenticated_user)) -> dict:
 @app.get("/api/library/deduplicate/status")
 def deduplicate_status(_user: dict = Depends(authenticated_user)) -> dict:
     return {"running": _dedup_running(), "result": _dedup_last_result, "progress": _dedup_progress if _dedup_running() else None}
+
+
+@app.post("/api/library/full-organize")
+def start_full_organize(_user: dict = Depends(authenticated_user)) -> dict:
+    started = _organizer.start(conn=conn, settings=settings, komga_client=komga_client)
+    if not started:
+        raise HTTPException(status_code=409, detail="Full organize already running")
+    repository.log(conn, "info", "Full library organize started")
+    return {"started": True}
+
+
+@app.post("/api/library/full-organize/stop")
+def stop_full_organize(_user: dict = Depends(authenticated_user)) -> dict:
+    _organizer.stop()
+    repository.log(conn, "info", "Full organize stop requested")
+    return {"stopped": True}
+
+
+@app.get("/api/library/full-organize/status")
+def full_organize_status(_user: dict = Depends(authenticated_user)) -> dict:
+    return _organizer.status()
 
 
 @app.post("/api/system/flush")

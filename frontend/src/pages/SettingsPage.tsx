@@ -1,6 +1,6 @@
 import { FormEvent, useEffect, useState } from "react";
-import { FolderSync, GitMerge, Wrench, Square, Zap, CheckCircle2, XCircle, Loader, Clock, Ban } from "lucide-react";
-import { api, FlushTask } from "../api";
+import { FolderSync, GitMerge, Layers, Wrench, Square, Zap, CheckCircle2, XCircle, Loader, Clock, Ban } from "lucide-react";
+import { api, FlushTask, FullOrganizeStatus } from "../api";
 import { StatCard } from "../components/shared";
 import type { SharedProps } from "../App";
 
@@ -214,6 +214,128 @@ function DedupProgress({ running }: { running: boolean }) {
         <span style={{ whiteSpace: "nowrap" }}>{label}</span>
       </div>
       <ProgressBar pct={pct} />
+    </div>
+  );
+}
+
+function FullOrganizeCard({ running, loading }: { running: boolean; loading: boolean }) {
+  const [tasks, setTasks]       = useState<FullOrganizeStatus["tasks"]>([]);
+  const [subProg, setSubProg]   = useState<FullOrganizeStatus["subProgress"]>(null);
+  const [everStarted, setEverStarted] = useState(false);
+
+  useEffect(() => {
+    if (!running) return;
+    const iv = setInterval(async () => {
+      try {
+        const s = await api.fullOrganizeStatus();
+        setTasks(s.tasks);
+        setSubProg(s.subProgress);
+        if (!s.running) clearInterval(iv);
+      } catch { clearInterval(iv); }
+    }, 1200);
+    return () => clearInterval(iv);
+  }, [running]);
+
+  async function start() {
+    setEverStarted(true);
+    setTasks([]);
+    setSubProg(null);
+    try {
+      await api.fullOrganizeStart();
+      const s = await api.fullOrganizeStatus();
+      setTasks(s.tasks);
+      setSubProg(s.subProgress);
+    } catch (e) { console.error(e); }
+  }
+
+  async function stop() { await api.fullOrganizeStop(); }
+
+  const done     = tasks.filter((t) => t.status === "done").length;
+  const hasError = tasks.some((t) => t.status === "error");
+
+  return (
+    <div className="card" style={{ marginTop: 16 }}>
+      <div className="card-title" style={{ display: "flex", alignItems: "center", gap: 8 }}>
+        <Layers size={16} style={{ color: "var(--accent)" }} />
+        Full Library Organize
+      </div>
+
+      <p style={{ color: "var(--text-2)", marginBottom: 14, lineHeight: 1.5 }}>
+        Runs <strong>Reorganize by chapters</strong> → <strong>Fix Komga libraries</strong> → <strong>Deduplicate books</strong> in sequence.
+        Each step shows its own progress.
+      </p>
+
+      {everStarted && tasks.length > 0 && (
+        <div style={{ display: "flex", flexDirection: "column", gap: 12, marginBottom: 16 }}>
+          {/* Overall bar */}
+          <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
+            <div style={{ flex: 1, height: 6, background: "var(--border)", borderRadius: 3, overflow: "hidden" }}>
+              <div style={{
+                height: "100%",
+                width: tasks.length ? `${(done / tasks.length) * 100}%` : "0%",
+                background: hasError ? "var(--red, #ef4444)" : "var(--accent)",
+                borderRadius: 3,
+                transition: "width 0.4s ease",
+              }} />
+            </div>
+            <span style={{ fontSize: 12, color: "var(--text-3)", whiteSpace: "nowrap" }}>{done}/{tasks.length}</span>
+          </div>
+
+          {tasks.map((task) => {
+            const isRunning = task.status === "running";
+            const pct = isRunning && subProg?.total
+              ? Math.round(((subProg.processed ?? 0) / subProg.total) * 100)
+              : undefined;
+
+            return (
+              <div key={task.id}>
+                <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+                  <TaskIcon status={task.status} />
+                  <span style={{ fontWeight: 500, flex: 1 }}>{task.label}</span>
+                  {task.detail && (
+                    <span style={{ fontSize: 12, color: "var(--text-3)", textAlign: "right", maxWidth: "55%" }}>{task.detail}</span>
+                  )}
+                </div>
+                {isRunning && pct !== undefined ? (
+                  <ProgressBar pct={pct} />
+                ) : (
+                  <TaskBar status={task.status} />
+                )}
+                {isRunning && subProg?.current && (
+                  <div style={{
+                    fontSize: 11, color: "var(--text-3)", marginTop: 3,
+                    overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap",
+                  }}>
+                    {subProg.current}
+                  </div>
+                )}
+              </div>
+            );
+          })}
+        </div>
+      )}
+
+      <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
+        {running ? (
+          <button className="btn-ghost btn-sm danger" onClick={stop} disabled={loading}>
+            <Square size={13} /> Stop
+          </button>
+        ) : (
+          <button
+            className="btn-primary"
+            style={{ height: 40, paddingInline: 20, display: "flex", alignItems: "center", gap: 8 }}
+            onClick={start}
+            disabled={loading}
+          >
+            <Layers size={15} /> Full Library Organize
+          </button>
+        )}
+        {everStarted && !running && tasks.length > 0 && (
+          <span style={{ fontSize: 12, color: hasError ? "var(--red, #ef4444)" : "var(--accent)" }}>
+            {hasError ? "Completed with errors" : "Completed"}
+          </span>
+        )}
+      </div>
     </div>
   );
 }
@@ -477,6 +599,9 @@ export function SettingsPage({ summary, loading, runAction }: SharedProps) {
           </div>
         </div>
       </div>
+
+      {/* ── Full Library Organize ── */}
+      <FullOrganizeCard running={summary.fullOrganizeRunning} loading={loading} />
 
       {/* ── System Flush ── */}
       <FlushCard flushRunning={summary.flushRunning} loading={loading} />

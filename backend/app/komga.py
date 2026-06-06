@@ -239,6 +239,19 @@ class KomgaClient:
             self.quick_scan_library(str(library["id"]))
         return len(libraries)
 
+    def range_libs_scan_status(self, range_names: set[str], since_iso: str) -> tuple[int, int]:
+        """Return (done, total) where done = range libraries whose lastScanned > since_iso."""
+        try:
+            libraries = self.list_libraries()
+            relevant = [lib for lib in libraries if lib.get("name") in range_names]
+            done = sum(
+                1 for lib in relevant
+                if (lib.get("lastScanned") or "") > since_iso
+            )
+            return done, len(relevant)
+        except Exception:
+            return 0, 0
+
     def import_all_books(self, library_root, scan: bool = True) -> dict:
         import time
         from pathlib import Path
