@@ -15,7 +15,7 @@ import { api, BookDetail, DownloadProgress, Job } from "../api";
 import { StatCard } from "../components/shared";
 import type { SharedProps } from "../App";
 
-type FilterType = "all" | "downloading" | "queued" | "done";
+type FilterType = "all" | "downloading" | "queued";
 
 export function DownloadsPage({ summary, progress, loading, runAction }: SharedProps) {
   const [search, setSearch] = useState("");
@@ -97,10 +97,11 @@ export function DownloadsPage({ summary, progress, loading, runAction }: SharedP
   }, 0);
 
   const filtered = progress.filter((p) => {
+    // Always hide books with no active work
+    if (p.running === 0 && p.queued === 0 && p.paused === 0 && p.failed === 0) return false;
     if (search && !p.manga_title.toLowerCase().includes(search.toLowerCase())) return false;
     if (filter === "downloading" && p.running === 0) return false;
-    if (filter === "queued"     && p.queued === 0)   return false;
-    if (filter === "done"       && (p.queued > 0 || p.running > 0 || p.missing_count > 0)) return false;
+    if (filter === "queued"      && p.queued === 0)  return false;
     return true;
   });
 
@@ -140,7 +141,7 @@ export function DownloadsPage({ summary, progress, loading, runAction }: SharedP
           placeholder="Search books…"
         />
         <div className="filter-chips">
-          {(["all", "downloading", "queued", "done"] as FilterType[]).map((f) => (
+          {(["all", "downloading", "queued"] as FilterType[]).map((f) => (
             <button
               key={f}
               type="button"
