@@ -2,44 +2,33 @@ import { FormEvent, useEffect, useRef, useState } from "react";
 import {
   Activity,
   BookOpen,
+  CheckCircle2,
   ChevronDown,
   Clock,
   Download,
   HardDrive,
+  Layers,
+  Loader,
   Pause,
+  Play,
   RefreshCw,
   Search,
   Server,
+  Square,
   X,
+  XCircle,
   Zap,
 } from "lucide-react";
-import { api, DebugThreads, LogEntry } from "../api";
+import { api, AutoRunStage, AutoRunStatus, DebugThreads, KomgaTask, LogEntry } from "../api";
 import { StatCard } from "../components/shared";
 import type { SharedProps } from "../App";
 
 type Props = SharedProps & { debugThreads: DebugThreads | null };
 
 export function DashboardPage({ summary, progress, debugThreads, loading, status, runAction, refresh }: Props) {
-  const [scanLimit, setScanLimit] = useState(summary.limitedScanActiveThreshold || 300);
-  const [scanLimitFocused, setScanLimitFocused] = useState(false);
   const [query, setQuery] = useState("");
   const [threadsOpen, setThreadsOpen] = useState(false);
   const [logThread, setLogThread] = useState<{ name: string; job: Record<string, unknown> | null } | null>(null);
-
-  const focusedRef = useRef(scanLimitFocused);
-  focusedRef.current = scanLimitFocused;
-
-  useEffect(() => {
-    if (!focusedRef.current) {
-      setScanLimit(summary.limitedScanActiveThreshold);
-    }
-  }, [summary.limitedScanActiveThreshold]);
-
-  function updateScanLimit(value: number) {
-    setScanLimit(value);
-    if (!Number.isFinite(value) || value < 1 || value > 5000) return;
-    api.updateTopUpThreshold(value).catch(() => {});
-  }
 
   async function submitSpecific(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
@@ -146,14 +135,6 @@ export function DashboardPage({ summary, progress, debugThreads, loading, status
 
         <div className="scan-actions">
           <button
-            className="btn-primary"
-            onClick={() => runAction("Full scan", () => api.fullScan(null))}
-            disabled={loading}
-            title="Scan full Asura catalog and enqueue missing chapters."
-          >
-            Full scan
-          </button>
-          <button
             className="btn-ghost danger"
             onClick={() => runAction("Stop scan", api.stopScan)}
             disabled={loading || (!summary.scanRunning && !summary.limitedScanActive)}
@@ -209,32 +190,26 @@ export function DashboardPage({ summary, progress, debugThreads, loading, status
           >
             Import all
           </button>
-        </div>
-
-        <div className="topup-row">
-          <label>
-            Top-up if active chapters below
-            <input
-              type="number"
-              min={1}
-              max={5000}
-              value={scanLimit}
-              onFocus={() => setScanLimitFocused(true)}
-              onBlur={() => setScanLimitFocused(false)}
-              onChange={(e) => updateScanLimit(Number(e.target.value))}
-            />
-            chapters
-          </label>
           <button
             className="btn-ghost"
-            onClick={() =>
-              runAction(`Top-up below ${scanLimit} active chapters`, () =>
-                api.startTopUp(scanLimit),
-              )
-            }
-            disabled={loading}
+            onClick={() => runAction("Full library organize", api.fullOrganizeStart)}
+            disabled={loading || summary.fullOrganizeRunning}
           >
-            <Zap size={13} /> Start top-up
+            <Layers size={13} /> Full library organize
+          </button>
+          <button
+            className="btn-ghost"
+            onClick={() => runAction("System flush", api.systemFlush)}
+            disabled={loading || summary.flushRunning}
+          >
+            <Zap size={13} /> System flush
+          </button>
+          <button
+            className="btn-ghost"
+            onClick={() => runAction("Retry failed downloads", api.retryFailedDownloads)}
+            disabled={loading || summary.failedJobs === 0}
+          >
+            Retry failed ({summary.failedJobs})
           </button>
         </div>
 
@@ -306,6 +281,9 @@ export function DashboardPage({ summary, progress, debugThreads, loading, status
           onClose={() => setLogThread(null)}
         />
       )}
+
+      <AutoRunCard autoRunRunning={summary.autoRunRunning} loading={loading} />
+      <KomgaTasksSection />
     </>
   );
 }
@@ -554,6 +532,195 @@ function ThreadLogModal({
             )}
           </div>
         )}
+      </div>
+    </div>
+  );
+}
+
+/* ── Auto Run Card ────────────────────────────────────────────────── */
+function StageIcon({ status }: { status: AutoRunStage["status"] }) {
+  if (status === "running")   return <Loader size={15} style={{ animation: "spin 1s linear infinite" }} />;
+  if (status === "done")      return <CheckCircle2 size={15} style={{ color: "var(--accent)" }} />;
+  if (status === "error")     return <XCircle size={15} style={{ color: "var(--red, #ef4444)" }} />;
+  if (status === "cancelled") return <X size={15} style={{ color: "var(--text-3)" }} />;
+  return <Clock size={15} style={{ color: "var(--text-3)" }} />;
+}
+
+function AutoRunCard({ autoRunRunning, loading }: { autoRunRunning: boolean; loading: boolean }) {
+  const [autoStatus, setAutoStatus] = useState<AutoRunStatus | null>(null);
+  const [everStarted, setEverStarted] = useState(false);
+
+  // Restore state on mount (page navigation doesn't lose progress)
+  useEffect(() => {
+    api.autoRunStatus().then((s) => {
+      if (s.status !== "idle") {
+        setAutoStatus(s);
+        setEverStarted(true);
+      }
+    }).catch(() => {});
+  }, []);
+
+  useEffect(() => {
+    if (!autoRunRunning) return;
+    setEverStarted(true);
+    const iv = setInterval(async () => {
+      try {
+        const s = await api.autoRunStatus();
+        setAutoStatus(s);
+        if (s.status !== "running") clearInterval(iv);
+      } catch {
+        clearInterval(iv);
+      }
+    }, 2000);
+    return () => clearInterval(iv);
+  }, [autoRunRunning]);
+
+  async function startAutoRun() {
+    setEverStarted(true);
+    setAutoStatus(null);
+    try {
+      await api.autoRunStart();
+      const s = await api.autoRunStatus();
+      setAutoStatus(s);
+    } catch (e) {
+      console.error(e);
+    }
+  }
+
+  async function stopAutoRun() {
+    await api.autoRunStop();
+  }
+
+  const stages = autoStatus?.stages ?? [];
+  const doneCount = stages.filter((s) => s.status === "done").length;
+  const hasError = stages.some((s) => s.status === "error");
+
+  return (
+    <div className="card" style={{ marginTop: 14 }}>
+      <div className="card-title" style={{ display: "flex", alignItems: "center", gap: 8 }}>
+        <Play size={16} style={{ color: "var(--accent)" }} />
+        AUTO RUN
+      </div>
+
+      <p style={{ color: "var(--text-2)", marginBottom: 14, lineHeight: 1.5, fontSize: 13 }}>
+        Runs the full maintenance pipeline: System Flush → Scan Local Duplicates → Full Library Organize → Discover Unmatched → Sync Metadata.
+      </p>
+
+      {everStarted && stages.length > 0 && (
+        <div style={{ display: "flex", flexDirection: "column", gap: 10, marginBottom: 16 }}>
+          {/* Overall bar */}
+          <div style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 2 }}>
+            <div style={{ flex: 1, height: 6, background: "var(--border)", borderRadius: 3, overflow: "hidden" }}>
+              <div style={{
+                height: "100%",
+                width: `${(doneCount / stages.length) * 100}%`,
+                background: hasError ? "var(--red, #ef4444)" : "var(--accent)",
+                borderRadius: 3,
+                transition: "width 0.4s ease",
+              }} />
+            </div>
+            <span style={{ fontSize: 12, color: "var(--text-3)", whiteSpace: "nowrap" }}>
+              {doneCount}/{stages.length} stages
+            </span>
+          </div>
+
+          {stages.map((stage) => (
+            <div key={stage.id}>
+              <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+                <StageIcon status={stage.status} />
+                <span style={{ fontWeight: 500, flex: 1, fontSize: 13 }}>{stage.name}</span>
+                {stage.status !== "pending" && (
+                  <span style={{ fontSize: 12, color: "var(--text-3)", whiteSpace: "nowrap" }}>
+                    {stage.progress}%
+                  </span>
+                )}
+              </div>
+              <div style={{ height: 3, background: "var(--border)", borderRadius: 2, marginTop: 4, overflow: "hidden" }}>
+                <div style={{
+                  height: "100%",
+                  width: `${stage.progress}%`,
+                  background:
+                    stage.status === "error"     ? "var(--red, #ef4444)" :
+                    stage.status === "cancelled" ? "var(--border)"       :
+                    "var(--accent)",
+                  borderRadius: 2,
+                  transition: "width 0.4s ease",
+                  animation: stage.status === "running" ? "pulse-bar 1.4s ease-in-out infinite" : undefined,
+                }} />
+              </div>
+            </div>
+          ))}
+        </div>
+      )}
+
+      <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
+        {autoRunRunning ? (
+          <button
+            className="btn-ghost btn-sm danger"
+            onClick={stopAutoRun}
+            disabled={loading}
+          >
+            <Square size={13} /> Stop auto-run
+          </button>
+        ) : (
+          <button
+            className="btn-primary"
+            style={{ width: "100%", height: 48, fontSize: 16, fontWeight: 700, display: "flex", alignItems: "center", justifyContent: "center", gap: 10 }}
+            onClick={startAutoRun}
+            disabled={loading || autoRunRunning}
+          >
+            <Play size={18} /> AUTO RUN
+          </button>
+        )}
+        {everStarted && !autoRunRunning && stages.length > 0 && (
+          <span style={{ fontSize: 12, color: hasError ? "var(--red, #ef4444)" : "var(--accent)" }}>
+            {hasError ? "Completed with errors" : autoStatus?.status === "done" ? "Completed" : ""}
+          </span>
+        )}
+      </div>
+    </div>
+  );
+}
+
+/* ── Komga Tasks Section ──────────────────────────────────────────── */
+function KomgaTasksSection() {
+  const [tasks, setTasks] = useState<KomgaTask[]>([]);
+
+  useEffect(() => {
+    const poll = async () => {
+      try {
+        setTasks(await api.komgaTasks());
+      } catch {
+        setTasks([]);
+      }
+    };
+    poll();
+    const iv = setInterval(poll, 5000);
+    return () => clearInterval(iv);
+  }, []);
+
+  if (tasks.length === 0) return null;
+
+  return (
+    <div className="card" style={{ marginTop: 14 }}>
+      <div className="card-title" style={{ display: "flex", alignItems: "center", gap: 8 }}>
+        <Activity size={14} /> Komga Running Jobs
+      </div>
+      <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
+        {tasks.map((task, i) => (
+          <div key={i} style={{ display: "flex", alignItems: "center", gap: 10 }}>
+            <Loader size={13} style={{ animation: "spin 1s linear infinite", color: "var(--accent)", flexShrink: 0 }} />
+            <span style={{ flex: 1, fontSize: 13 }}>{task.name}</span>
+            {task.progress != null && (
+              <>
+                <span style={{ fontSize: 12, color: "var(--text-3)", whiteSpace: "nowrap" }}>{task.progress}%</span>
+                <div style={{ width: 80, height: 4, background: "var(--border)", borderRadius: 2, overflow: "hidden" }}>
+                  <div style={{ height: "100%", width: `${task.progress}%`, background: "var(--accent)", borderRadius: 2 }} />
+                </div>
+              </>
+            )}
+          </div>
+        ))}
       </div>
     </div>
   );
