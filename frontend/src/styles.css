@@ -818,8 +818,8 @@ input:focus, select:focus, textarea:focus {
 
 .browse-genre-strip {
   display: flex;
+  flex-wrap: wrap;
   gap: 6px;
-  overflow-x: auto;
   max-width: 100%;
   padding: 2px 0 12px;
   margin-bottom: 2px;
