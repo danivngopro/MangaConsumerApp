@@ -411,6 +411,7 @@ def deduplicate_library(
     stop_event: threading.Event | None = None,
     threshold: float = 0.82,
     progress: dict | None = None,
+    ignore_chapter_ranges: bool = False,
 ) -> dict:
     """
     Find all books with similar titles across all range directories and root level.
@@ -499,6 +500,17 @@ def deduplicate_library(
             break
 
         group = [books[i] for i in group_indices]
+
+        # When called from auto-run, skip groups where every member is in a
+        # different chapter-range parent folder — those are legitimately
+        # separate range placements, not duplicates.
+        if ignore_chapter_ranges:
+            parent_names = [b["folder"].parent.name for b in group]
+            if (
+                all(p in RANGE_NAMES for p in parent_names)
+                and len(set(parent_names)) == len(parent_names)
+            ):
+                continue
 
         if any(b["folder"] in active_folders for b in group):
             skipped_active += len(group) - 1
