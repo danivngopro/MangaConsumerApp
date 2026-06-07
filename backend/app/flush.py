@@ -428,6 +428,7 @@ class AutoRunner:
         self._stages: list[dict] = self._fresh_stages()
         self._stop_requested = False
         self._dedup_progress: dict = {}
+        self._stop_event = threading.Event()
 
     @property
     def running(self) -> bool:
@@ -457,7 +458,8 @@ class AutoRunner:
                 return False
             self._stop_requested = False
             self._stages = self._fresh_stages()
-            self._dedup_progress = {}
+            self._dedup_progress.clear()
+            self._stop_event.clear()
             self._thread = threading.Thread(
                 target=self._run,
                 kwargs=dict(
@@ -479,6 +481,7 @@ class AutoRunner:
 
     def stop(self) -> None:
         self._stop_requested = True
+        self._stop_event.set()
 
     def status(self) -> dict:
         stages = []
@@ -539,11 +542,10 @@ class AutoRunner:
         import time
         from .library_organizer import deduplicate_library
         from .metadata_discovery import discover_unmatched_local_metadata
-        from .metadata_sync import sync_manga_metadata_to_komga
 
         # ── Stage 1: System Flush ─────────────────────────────────────────────
         self._set("flush", "running", 0)
-        flusher.start(
+        started = flusher.start(
             conn=conn,
             settings=settings,
             download_queue=download_queue,
@@ -552,6 +554,13 @@ class AutoRunner:
             scan_scheduler=scan_scheduler,
             scan_stop_event=scan_stop_event,
         )
+        if not started:
+            # Flusher was already running — wait for it to finish first
+            while flusher.running and not self._stop_requested:
+                time.sleep(1)
+            if not flusher.running:
+                # It finished before we got to it — treat as already done
+                pass
         while flusher.running and not self._stop_requested:
             s = flusher.status()
             tasks = s.get("tasks", [])
@@ -578,11 +587,14 @@ class AutoRunner:
                 conn,
                 settings.library_root,
                 komga_client,
-                stop_event=None,
+                stop_event=self._stop_event,
                 progress=self._dedup_progress,
                 ignore_chapter_ranges=True,
             )
-            self._set("dedup", "done", 100)
+            if self._stop_requested:
+                self._set("dedup", "cancelled", 0)
+            else:
+                self._set("dedup", "done", 100)
         except Exception as exc:
             self._set("dedup", "error", 0)
             repository.log(conn, "error", f"Auto-run dedup failed: {exc}")
