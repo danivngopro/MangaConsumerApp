@@ -408,3 +408,245 @@ class SystemFlusher:
             self._set("resume", "done", f"{n} chapters ready to download")
         except Exception as exc:
             self._set("resume", "error", str(exc))
+
+
+# ── Auto Runner ────────────────────────────────────────────────────────────────
+
+_AUTO_RUN_STAGES = [
+    ("flush",    "System Flush"),
+    ("dedup",    "Scan Local Duplicates"),
+    ("organize", "Full Library Organize"),
+    ("discover", "Discover Unmatched"),
+    ("sync",     "Sync Metadata"),
+]
+
+
+class AutoRunner:
+    def __init__(self) -> None:
+        self._lock = threading.Lock()
+        self._thread: threading.Thread | None = None
+        self._stages: list[dict] = self._fresh_stages()
+        self._stop_requested = False
+        self._dedup_progress: dict = {}
+
+    @property
+    def running(self) -> bool:
+        return self._thread is not None and self._thread.is_alive()
+
+    def _fresh_stages(self) -> list[dict]:
+        return [
+            {"id": sid, "name": name, "status": "pending", "progress": 0}
+            for sid, name in _AUTO_RUN_STAGES
+        ]
+
+    def start(
+        self,
+        *,
+        flusher,
+        organizer,
+        conn: sqlite3.Connection,
+        settings,
+        komga_client,
+        download_queue,
+        asura_client,
+        scan_scheduler,
+        scan_stop_event,
+    ) -> bool:
+        with self._lock:
+            if self.running:
+                return False
+            self._stop_requested = False
+            self._stages = self._fresh_stages()
+            self._dedup_progress = {}
+            self._thread = threading.Thread(
+                target=self._run,
+                kwargs=dict(
+                    flusher=flusher,
+                    organizer=organizer,
+                    conn=conn,
+                    settings=settings,
+                    komga_client=komga_client,
+                    download_queue=download_queue,
+                    asura_client=asura_client,
+                    scan_scheduler=scan_scheduler,
+                    scan_stop_event=scan_stop_event,
+                ),
+                name="auto-runner",
+                daemon=True,
+            )
+            self._thread.start()
+            return True
+
+    def stop(self) -> None:
+        self._stop_requested = True
+
+    def status(self) -> dict:
+        stages = []
+        for s in self._stages:
+            stage = dict(s)
+            # Overlay live dedup progress when that stage is actively running
+            if stage["id"] == "dedup" and stage["status"] == "running":
+                total = self._dedup_progress.get("total", 0)
+                processed = self._dedup_progress.get("processed", 0)
+                if total:
+                    stage["progress"] = round(processed / total * 100)
+            stages.append(stage)
+
+        if self.running:
+            overall = "running"
+        elif any(s["status"] == "error" for s in stages):
+            overall = "error"
+        elif any(s["status"] in ("done", "cancelled") for s in stages):
+            overall = "done"
+        else:
+            overall = "idle"
+
+        current = next(
+            (i + 1 for i, s in enumerate(stages) if s["status"] == "running"), 0
+        )
+        return {"status": overall, "current_stage": current, "stages": stages}
+
+    def _set(self, stage_id: str, status: str, progress: int = 0) -> None:
+        for s in self._stages:
+            if s["id"] == stage_id:
+                s["status"] = status
+                s["progress"] = progress
+
+    def _update_progress(self, stage_id: str, progress: int) -> None:
+        for s in self._stages:
+            if s["id"] == stage_id:
+                s["progress"] = progress
+
+    def _cancel_remaining(self) -> None:
+        for s in self._stages:
+            if s["status"] == "pending":
+                s["status"] = "cancelled"
+                s["progress"] = 0
+
+    def _run(
+        self,
+        *,
+        flusher,
+        organizer,
+        conn: sqlite3.Connection,
+        settings,
+        komga_client,
+        download_queue,
+        asura_client,
+        scan_scheduler,
+        scan_stop_event,
+    ) -> None:
+        import time
+        from .library_organizer import deduplicate_library
+        from .metadata_discovery import discover_unmatched_local_metadata
+        from .metadata_sync import sync_manga_metadata_to_komga
+
+        # ── Stage 1: System Flush ─────────────────────────────────────────────
+        self._set("flush", "running", 0)
+        flusher.start(
+            conn=conn,
+            settings=settings,
+            download_queue=download_queue,
+            komga_client=komga_client,
+            asura_client=asura_client,
+            scan_scheduler=scan_scheduler,
+            scan_stop_event=scan_stop_event,
+        )
+        while flusher.running and not self._stop_requested:
+            s = flusher.status()
+            tasks = s.get("tasks", [])
+            done = sum(1 for t in tasks if t["status"] in ("done", "error", "cancelled"))
+            total = len(tasks)
+            self._update_progress("flush", round(done / total * 100) if total else 0)
+            time.sleep(1)
+        if self._stop_requested:
+            flusher.stop()
+            self._set("flush", "cancelled", 0)
+            return self._cancel_remaining()
+        flush_tasks = flusher.status().get("tasks", [])
+        has_error = any(t["status"] == "error" for t in flush_tasks)
+        self._set("flush", "error" if has_error else "done", 0 if has_error else 100)
+
+        if self._stop_requested:
+            return self._cancel_remaining()
+
+        # ── Stage 2: Scan Local Duplicates (ignore chapter ranges) ────────────
+        self._set("dedup", "running", 0)
+        self._dedup_progress.clear()
+        try:
+            deduplicate_library(
+                conn,
+                settings.library_root,
+                komga_client,
+                stop_event=None,
+                progress=self._dedup_progress,
+                ignore_chapter_ranges=True,
+            )
+            self._set("dedup", "done", 100)
+        except Exception as exc:
+            self._set("dedup", "error", 0)
+            repository.log(conn, "error", f"Auto-run dedup failed: {exc}")
+
+        if self._stop_requested:
+            return self._cancel_remaining()
+
+        # ── Stage 3: Full Library Organize ────────────────────────────────────
+        self._set("organize", "running", 0)
+        organizer.start(conn=conn, settings=settings, komga_client=komga_client)
+        while organizer.running and not self._stop_requested:
+            s = organizer.status()
+            tasks = s.get("tasks", [])
+            done = sum(1 for t in tasks if t["status"] in ("done", "error", "cancelled"))
+            total = len(tasks)
+            self._update_progress("organize", round(done / total * 100) if total else 0)
+            time.sleep(1)
+        if self._stop_requested:
+            organizer.stop()
+            self._set("organize", "cancelled", 0)
+            return self._cancel_remaining()
+        org_tasks = organizer.status().get("tasks", [])
+        has_error = any(t["status"] == "error" for t in org_tasks)
+        self._set("organize", "error" if has_error else "done", 0 if has_error else 100)
+
+        if self._stop_requested:
+            return self._cancel_remaining()
+
+        # ── Stage 4: Discover Unmatched ───────────────────────────────────────
+        self._set("discover", "running", 0)
+        try:
+            discover_unmatched_local_metadata(conn, asura_client)
+            self._set("discover", "done", 100)
+        except Exception as exc:
+            self._set("discover", "error", 0)
+            repository.log(conn, "error", f"Auto-run discover failed: {exc}")
+
+        if self._stop_requested:
+            return self._cancel_remaining()
+
+        # ── Stage 5: Sync Metadata ────────────────────────────────────────────
+        self._set("sync", "running", 0)
+        if not komga_client.enabled:
+            self._set("sync", "done", 100)
+        else:
+            try:
+                candidates = repository.metadata_sync_candidates(conn)
+                total = len(candidates)
+                synced = 0
+                for c in candidates:
+                    if self._stop_requested:
+                        break
+                    try:
+                        sync_manga_metadata_to_komga(conn, komga_client, int(c["id"]))
+                        synced += 1
+                    except Exception:
+                        pass
+                    self._update_progress("sync", round(synced / total * 100) if total else 100)
+                if self._stop_requested:
+                    self._set("sync", "cancelled", round(synced / total * 100) if total else 0)
+                    return self._cancel_remaining()
+                self._set("sync", "done", 100)
+            except Exception as exc:
+                self._set("sync", "error", 0)
+                repository.log(conn, "error", f"Auto-run sync failed: {exc}")
+
+        repository.log(conn, "info", "Auto-run complete")
