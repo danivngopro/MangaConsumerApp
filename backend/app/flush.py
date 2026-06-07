@@ -11,10 +11,11 @@ from .metadata_sync import sync_manga_metadata_to_komga
 # ── Full Library Organizer ─────────────────────────────────────────────────────
 
 _ORGANIZE_STEPS = [
-    ("reorganize",  "Reorganize by chapters"),
-    ("cleanup",     "Fix Komga libraries"),
-    ("deduplicate", "Deduplicate books"),
-    ("komga_scan",  "Komga scan"),
+    ("dedup_chapters", "Deduplicate chapter files"),
+    ("reorganize",     "Reorganize by chapters"),
+    ("cleanup",        "Fix Komga libraries"),
+    ("deduplicate",    "Deduplicate books"),
+    ("komga_scan",     "Komga scan"),
 ]
 
 
@@ -78,7 +79,26 @@ class LibraryOrganizer:
                 t["detail"] = "stopped"
 
     def _run(self, *, conn: sqlite3.Connection, settings, komga_client) -> None:
-        from .library_organizer import reorganize_library, cleanup_per_book_libraries, deduplicate_library
+        from .library_organizer import (
+            deduplicate_chapter_files,
+            reorganize_library,
+            cleanup_per_book_libraries,
+            deduplicate_library,
+        )
+
+        # ── Step 0: Deduplicate chapter files ─────────────────────────────────
+        self._sub_progress.clear()
+        self._set("dedup_chapters", "running", "Scanning for duplicate chapter files…")
+        try:
+            result = deduplicate_chapter_files(conn, settings.library_root, progress=self._sub_progress)
+            detail = f"{result['deleted']} duplicate files removed"
+            if result['freedMb']:
+                detail += f" · {result['freedMb']} MB freed"
+            self._set("dedup_chapters", "done", detail)
+        except Exception as exc:
+            self._set("dedup_chapters", "error", str(exc))
+        if self._stop_requested:
+            return self._cancel_remaining()
 
         # ── Step 1: Reorganize ────────────────────────────────────────────────
         self._sub_progress.clear()

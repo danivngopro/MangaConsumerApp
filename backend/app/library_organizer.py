@@ -35,6 +35,78 @@ def get_range_name(chapter_count: int) -> str:
     return "500+ Chapters"
 
 
+def deduplicate_chapter_files(
+    conn: sqlite3.Connection,
+    library_root: Path,
+    progress: dict | None = None,
+) -> dict:
+    """
+    Within each book folder, remove duplicate chapter files — keeping the largest
+    file per unique chapter key. This runs before reorganize so that chapter counts
+    are accurate for range assignment.
+    """
+    from .library import _iter_book_folders, extract_chapter_key, COMIC_EXTENSIONS
+
+    all_folders = list(_iter_book_folders(library_root))
+    if progress is not None:
+        progress.update({"total": len(all_folders), "processed": 0, "deleted": 0, "current": ""})
+
+    total_deleted = 0
+    total_bytes = 0
+    errors: list[str] = []
+
+    for idx, folder in enumerate(all_folders):
+        if progress is not None:
+            progress["current"] = folder.name
+            progress["processed"] = idx
+
+        comic_files = [
+            f for f in folder.rglob("*")
+            if f.is_file() and f.suffix.lower() in COMIC_EXTENSIONS
+        ]
+
+        # Group files by chapter key; files with no parseable key are left alone
+        by_key: dict[str, list[Path]] = {}
+        for f in comic_files:
+            key = extract_chapter_key(f.name)
+            if key:
+                by_key.setdefault(key, []).append(f)
+
+        book_deleted = 0
+        for key, dupes in by_key.items():
+            if len(dupes) <= 1:
+                continue
+            # Keep the largest file (highest quality), delete the rest
+            dupes.sort(key=lambda f: f.stat().st_size, reverse=True)
+            for dup in dupes[1:]:
+                try:
+                    size = dup.stat().st_size
+                    dup.unlink()
+                    book_deleted += 1
+                    total_bytes += size
+                except Exception as exc:
+                    errors.append(f"{folder.name}/{dup.name}: {exc}")
+
+        if book_deleted:
+            total_deleted += book_deleted
+            if progress is not None:
+                progress["deleted"] = total_deleted
+            repository.log(
+                conn, "info",
+                f"Removed {book_deleted} duplicate chapter files from '{folder.name}'",
+            )
+
+    if progress is not None:
+        progress["processed"] = len(all_folders)
+
+    freed_mb = round(total_bytes / 1_048_576, 1)
+    repository.log(
+        conn, "info",
+        f"Chapter dedup: {total_deleted} duplicate files removed, {freed_mb} MB freed",
+    )
+    return {"deleted": total_deleted, "freedMb": freed_mb, "errors": errors}
+
+
 def cleanup_per_book_libraries(
     conn: sqlite3.Connection,
     library_root: Path,
@@ -188,7 +260,6 @@ def reorganize_library(
             skipped_active += 1
             continue
 
-        # Count chapters directly from the filesystem
         comic_files = [
             f for f in folder.rglob("*")
             if f.is_file() and f.suffix.lower() in COMIC_EXTENSIONS
@@ -214,7 +285,11 @@ def reorganize_library(
 
         target = library_root / target_range / folder.name
         if target.exists():
-            # Collision handled by deduplicate step
+            repository.log(
+                conn, "warning",
+                f"Reorganize collision: '{folder.name}' should move to {target_range} "
+                f"but target already exists ({chapter_count} files). Run Deduplicate to merge.",
+            )
             skipped += 1
             continue
 
