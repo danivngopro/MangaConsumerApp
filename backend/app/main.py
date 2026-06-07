@@ -201,9 +201,10 @@ def _dedup_running() -> bool:
     return _dedup_thread is not None and _dedup_thread.is_alive()
 
 
-from .flush import SystemFlusher, LibraryOrganizer  # noqa: E402  (after module-level vars are defined)
+from .flush import SystemFlusher, LibraryOrganizer, AutoRunner  # noqa: E402  (after module-level vars are defined)
 _flusher = SystemFlusher()
 _organizer = LibraryOrganizer()
+_auto_runner = AutoRunner()
 
 app = FastAPI(title="Manga Crawler")
 app.add_middleware(
@@ -307,6 +308,7 @@ def summary(_user: dict = Depends(authenticated_user)) -> dict:
     data["deduplicateRunning"] = _dedup_running()
     data["flushRunning"] = _flusher.running
     data["fullOrganizeRunning"] = _organizer.running
+    data["autoRunRunning"] = _auto_runner.running
     data["limitedScanActiveThreshold"] = int(repository.get_setting(conn, "limited_scan_active_threshold", "300") or "300")
     return data
 
@@ -930,6 +932,42 @@ def stop_system_flush(_user: dict = Depends(authenticated_user)) -> dict:
 @app.get("/api/system/flush/status")
 def system_flush_status(_user: dict = Depends(authenticated_user)) -> dict:
     return _flusher.status()
+
+
+@app.post("/api/system/auto-run")
+def start_auto_run(_user: dict = Depends(authenticated_user)) -> dict:
+    started = _auto_runner.start(
+        flusher=_flusher,
+        organizer=_organizer,
+        conn=conn,
+        settings=settings,
+        komga_client=komga_client,
+        download_queue=download_queue,
+        asura_client=asura_client,
+        scan_scheduler=scan_scheduler,
+        scan_stop_event=scan_stop_event,
+    )
+    if not started:
+        raise HTTPException(status_code=409, detail="Auto-run already running")
+    repository.log(conn, "info", "Auto-run started")
+    return {"started": True}
+
+
+@app.post("/api/system/auto-run/stop")
+def stop_auto_run(_user: dict = Depends(authenticated_user)) -> dict:
+    _auto_runner.stop()
+    repository.log(conn, "info", "Auto-run stop requested")
+    return {"stopped": True}
+
+
+@app.get("/api/system/auto-run/status")
+def auto_run_status(_user: dict = Depends(authenticated_user)) -> dict:
+    return _auto_runner.status()
+
+
+@app.get("/api/komga/tasks")
+def komga_tasks(_user: dict = Depends(authenticated_user)) -> list:
+    return komga_client.get_tasks() if komga_client.enabled else []
 
 
 @app.post("/api/scan/full")
