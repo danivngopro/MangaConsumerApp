@@ -604,7 +604,10 @@ class AutoRunner:
 
         # ── Stage 3: Full Library Organize ────────────────────────────────────
         self._set("organize", "running", 0)
-        organizer.start(conn=conn, settings=settings, komga_client=komga_client)
+        started = organizer.start(conn=conn, settings=settings, komga_client=komga_client)
+        if not started:
+            while organizer.running and not self._stop_requested:
+                time.sleep(1)
         while organizer.running and not self._stop_requested:
             s = organizer.status()
             tasks = s.get("tasks", [])
