@@ -8,7 +8,6 @@ import {
   Pause,
   Play,
   RefreshCw,
-  Search,
   Settings,
   CopyX,
   Tags,
@@ -27,12 +26,11 @@ import { DownloadsPage } from "./pages/DownloadsPage";
 import { DuplicatesPage } from "./pages/DuplicatesPage";
 import { MetadataPage } from "./pages/MetadataPage";
 import { BrowsePage } from "./pages/BrowsePage";
-import { SearchPage } from "./pages/SearchPage";
 import { SettingsPage } from "./pages/SettingsPage";
 
-type Tab = "dashboard" | "downloads" | "duplicates" | "metadata" | "browse" | "search" | "settings";
+type Tab = "dashboard" | "browse" | "downloads" | "duplicates" | "metadata" | "settings";
 
-const VALID_TABS: Tab[] = ["dashboard", "downloads", "duplicates", "metadata", "browse", "search", "settings"];
+const VALID_TABS: Tab[] = ["dashboard", "browse", "downloads", "duplicates", "metadata", "settings"];
 
 function tabFromPath(pathname: string): Tab {
   const seg = pathname.replace(/^\//, "").split("/")[0];
@@ -58,6 +56,7 @@ const emptySummary: Summary = {
   deduplicateRunning: false,
   flushRunning: false,
   fullOrganizeRunning: false,
+  autoRunRunning: false,
   limitedScanActiveThreshold: 300,
   libraryRoot: "",
   komgaUrl: "",
@@ -190,11 +189,10 @@ export function App() {
 
   const tabs: Array<{ id: Tab; label: string; icon: React.ReactElement; badge?: number }> = [
     { id: "dashboard", label: "Dashboard", icon: <LayoutDashboard size={15} /> },
+    { id: "browse",    label: "Browse",    icon: <Library size={15} /> },
     { id: "downloads", label: "Downloads", icon: <Download size={15} />, badge: activeDownloads || undefined },
     { id: "duplicates", label: "Duplicates", icon: <CopyX size={15} /> },
-    { id: "metadata", label: "Metadata", icon: <Tags size={15} /> },
-    { id: "browse",   label: "Browse",   icon: <Library size={15} /> },
-    { id: "search",    label: "Search",    icon: <Search size={15} /> },
+    { id: "metadata",  label: "Metadata",  icon: <Tags size={15} /> },
     { id: "settings",  label: "Settings",  icon: <Settings size={15} /> },
   ];
 
@@ -300,9 +298,6 @@ export function App() {
           {activeTab === "metadata" && <MetadataPage {...shared} />}
           {activeTab === "browse" && (
             <BrowsePage {...shared} browseFilters={browseFilters} />
-          )}
-          {activeTab === "search" && (
-            <SearchPage {...shared} browseFilters={browseFilters} />
           )}
           {activeTab === "settings" && <SettingsPage {...shared} />}
         </div>
