@@ -17,6 +17,7 @@ export type Summary = {
   deduplicateRunning: boolean;
   flushRunning: boolean;
   fullOrganizeRunning: boolean;
+  autoRunRunning: boolean;
   limitedScanActiveThreshold: number;
   libraryRoot: string;
   komgaUrl: string;
@@ -254,6 +255,24 @@ export type FullOrganizeStatus = {
     current?: string;
     phase?: string;
   } | null;
+};
+
+export type AutoRunStage = {
+  id: string;
+  name: string;
+  status: "pending" | "running" | "done" | "error" | "cancelled";
+  progress: number;
+};
+
+export type AutoRunStatus = {
+  status: "idle" | "running" | "done" | "error";
+  current_stage: number;
+  stages: AutoRunStage[];
+};
+
+export type KomgaTask = {
+  name: string;
+  progress: number | null;
 };
 
 export type MetadataCandidate = Book & {
@@ -602,4 +621,8 @@ export const api = {
       method: "POST",
       body: JSON.stringify(payload),
     }),
+  autoRunStart: () => request<{ started: boolean }>("/api/system/auto-run", { method: "POST" }),
+  autoRunStop: () => request<{ stopped: boolean }>("/api/system/auto-run/stop", { method: "POST" }),
+  autoRunStatus: () => request<AutoRunStatus>("/api/system/auto-run/status"),
+  komgaTasks: () => request<KomgaTask[]>("/api/komga/tasks"),
 };
