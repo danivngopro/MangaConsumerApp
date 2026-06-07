@@ -273,6 +273,44 @@ def get_inventory_items(conn: sqlite3.Connection) -> list[dict]:
     return list(get_inventory_map(conn).values())
 
 
+def restore_downloaded_from_inventory(conn: sqlite3.Connection) -> int:
+    """Mark chapters.is_downloaded=1 for chapters found on disk in local_inventory.
+
+    Call after scan_library() when is_downloaded was bulk-cleared (e.g., system flush).
+    Matches local_inventory.folder_path → manga.local_folder to find the manga_id,
+    then marks all chapter_keys present in the inventory as downloaded.
+    """
+    rows = conn.execute(
+        """
+        SELECT li.chapters_json, m.id AS manga_id
+        FROM local_inventory li
+        JOIN manga m ON m.local_folder = li.folder_path
+        WHERE li.chapters_json IS NOT NULL AND li.chapters_json != '[]'
+        """
+    ).fetchall()
+
+    total = 0
+    now = utc_now()
+    with DB_LOCK:
+        for row in rows:
+            chapter_keys: list[str] = json.loads(row["chapters_json"])
+            if not chapter_keys:
+                continue
+            manga_id = row["manga_id"]
+            # Batch to stay under SQLite's 999-parameter limit
+            for i in range(0, len(chapter_keys), 500):
+                batch = chapter_keys[i : i + 500]
+                placeholders = ",".join("?" * len(batch))
+                result = conn.execute(
+                    f"UPDATE chapters SET is_downloaded = 1, updated_at = ? "
+                    f"WHERE manga_id = ? AND chapter_key IN ({placeholders}) AND is_downloaded = 0",
+                    [now, manga_id, *batch],
+                )
+                total += result.rowcount
+        conn.commit()
+    return total
+
+
 def upsert_manga(conn: sqlite3.Connection, manga: dict) -> int:
     now = utc_now()
     title = fix_mojibake(manga["title"])
@@ -983,6 +1021,7 @@ def list_duplicate_candidates(conn: sqlite3.Connection) -> list[dict]:
                    m.download_folder_override, m.download_title_override
             FROM duplicate_candidates dc
             LEFT JOIN manga m ON m.id = dc.remote_manga_id
+            WHERE dc.score >= 0.82 OR dc.status != 'pending'
             ORDER BY
                 CASE dc.status
                     WHEN 'pending' THEN 0

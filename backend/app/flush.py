@@ -321,9 +321,12 @@ class SystemFlusher:
         try:
             result = scan_library(conn, settings.library_root)
             inventory = repository.get_inventory_map(conn)
+            # Restore is_downloaded flags cleared in step 2 so enqueue-missing
+            # doesn't re-queue chapters that are already on disk.
+            restored = repository.restore_downloaded_from_inventory(conn)
             self._set(
                 "local", "done",
-                f"{result['books']} books · {result['chapters']} chapters found",
+                f"{result['books']} books · {result['chapters']} chapters · {restored} marked as downloaded",
             )
         except Exception as exc:
             self._set("local", "error", str(exc))

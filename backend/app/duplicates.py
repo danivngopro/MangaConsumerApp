@@ -54,7 +54,7 @@ def best_title_match(remote_title: str, inventory_items: Iterable[dict], thresho
     return best
 
 
-def all_title_matches(remote_title: str, inventory_items: Iterable[dict], threshold: float = 0.72) -> list[dict]:
+def all_title_matches(remote_title: str, inventory_items: Iterable[dict], threshold: float = 0.82) -> list[dict]:
     """Return every inventory item with similarity >= threshold, sorted by score desc."""
     results = []
     for item in inventory_items:
