@@ -76,6 +76,23 @@ class KomgaClient:
         response = self.session.post(f"{self.libraries_url}/{library_id}/scan?deep=false", timeout=30)
         response.raise_for_status()
 
+    def get_tasks(self) -> list[dict]:
+        """Return active Komga background tasks proxied for the frontend."""
+        try:
+            resp = self.session.get(f"{self.settings.url}/api/v1/tasks", timeout=10)
+            resp.raise_for_status()
+            data = resp.json()
+            tasks = data if isinstance(data, list) else data.get("content", [])
+            return [
+                {
+                    "name": t.get("type") or t.get("name") or "Task",
+                    "progress": t.get("progress"),
+                }
+                for t in tasks
+            ]
+        except Exception:
+            return []
+
     def quick_scan_book(self, book_title: str) -> dict:
         library, _created = self.ensure_library_for_book(book_title)
         self.quick_scan_library(str(library["id"]))
