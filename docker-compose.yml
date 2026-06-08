@@ -4,6 +4,8 @@ services:
     container_name: manga-recoverer
     ports:
       - "8816:8816"
+    env_file:
+      - .env
     environment:
       APP_DATA_DIR: /data
       MANGA_LIBRARY_ROOT: /books
@@ -12,12 +14,25 @@ services:
       REQUEST_DELAY_SECONDS: "1.0"
       AUTO_SCAN_EVERY_DAYS: "0"
       KOMGA_URL: http://host.docker.internal:25600
-      KOMGA_USERNAME: ""
-      KOMGA_PASSWORD: ""
       KOMGA_BOOKS_ROOT_DOCKER: /books
     volumes:
       - ./data:/data
       - /media/danivngopro/Ext3TDrive3/komga/books:/books
     extra_hosts:
       - "host.docker.internal:host-gateway"
+    restart: unless-stopped
+
+  manga-bot:
+    build: .
+    container_name: manga-bot
+    command: python -m backend.bot.bot
+    env_file:
+      - .env.bot
+    environment:
+      MANGA_API_URL: http://manga-recoverer:8816
+      OLLAMA_URL: http://host.docker.internal:11434
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    depends_on:
+      - manga-recoverer
     restart: unless-stopped
