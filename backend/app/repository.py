@@ -870,31 +870,31 @@ def resume_downloads_for_manga(conn: sqlite3.Connection, manga_id: int) -> int:
 
 
 def enqueue_all_missing(conn: sqlite3.Connection) -> int:
-    """Bulk-enqueue every chapter that is not downloaded and has no active job."""
+    """Enqueue chapters currently known to be missing from scanned manga."""
     with DB_LOCK:
-        now = utc_now()
-        cursor = conn.execute(
+        rows = conn.execute(
             """
-            INSERT INTO jobs(type, status, manga_id, chapter_id, priority, created_at)
-            SELECT 'download', 'queued', c.manga_id, c.id, 0, ?
-            FROM chapters c
-            WHERE c.is_downloaded = 0
+            SELECT m.id, li.chapters_json
+            FROM manga m
+            LEFT JOIN local_inventory li ON li.folder_path = m.local_folder
+            WHERE m.missing_count > 0
               AND NOT EXISTS (
                 SELECT 1 FROM duplicate_candidates dc
-                WHERE dc.remote_manga_id = c.manga_id
+                WHERE dc.remote_manga_id = m.id
                   AND dc.status = 'pending'
               )
-              AND NOT EXISTS (
-                SELECT 1 FROM jobs j
-                WHERE j.type = 'download'
-                  AND j.chapter_id = c.id
-                  AND j.status IN ('queued', 'running', 'paused', 'auto_paused', 'failed')
-              )
-            """,
-            (now,),
-        )
-        conn.commit()
-        return cursor.rowcount
+            """
+        ).fetchall()
+
+        enqueued = 0
+        for row in rows:
+            local_keys = set(json.loads(row["chapters_json"] or "[]"))
+            for chapter in find_missing_chapters(conn, int(row["id"]), local_keys):
+                before = conn.total_changes
+                enqueue_download(conn, int(row["id"]), int(chapter["id"]))
+                if conn.total_changes > before:
+                    enqueued += 1
+        return enqueued
 
 
 def upsert_duplicate_candidate(
