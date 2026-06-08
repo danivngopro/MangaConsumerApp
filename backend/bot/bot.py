@@ -11,7 +11,7 @@ import functools
 import logging
 from textwrap import dedent
 
-from telegram import Update
+from telegram import BotCommand, Update
 from telegram.constants import ChatAction
 from telegram.ext import Application, CommandHandler, ContextTypes, MessageHandler, filters
 
@@ -467,8 +467,44 @@ async def handle_message(update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> None
 
 # ── Entry point ───────────────────────────────────────────────────────────────
 
+_COMMANDS = [
+    BotCommand("status",          "Library & queue overview"),
+    BotCommand("progress",        "Active downloads"),
+    BotCommand("logs",            "Recent log entries"),
+    BotCommand("autorun",         "Start full AUTO RUN pipeline"),
+    BotCommand("autorun_status",  "AUTO RUN stage progress"),
+    BotCommand("autorun_stop",    "Stop AUTO RUN"),
+    BotCommand("flush",           "Start system flush"),
+    BotCommand("flush_stop",      "Stop system flush"),
+    BotCommand("organize",        "Full library organize"),
+    BotCommand("organize_stop",   "Stop library organize"),
+    BotCommand("reindex",         "Reindex local library"),
+    BotCommand("full_scan",       "Full Asura catalog scan"),
+    BotCommand("stop_scan",       "Stop current scan"),
+    BotCommand("stop_all",        "Stop all scans"),
+    BotCommand("enqueue_missing", "Queue missing chapters for download"),
+    BotCommand("retry_failed",    "Re-queue failed downloads"),
+    BotCommand("reset_missing",   "Reset missing chapter flags"),
+    BotCommand("pause_queue",     "Pause download queue"),
+    BotCommand("resume_queue",    "Resume download queue"),
+    BotCommand("komga_scan",      "Trigger Komga quick scan"),
+    BotCommand("import_all",      "Trigger Komga import all"),
+    BotCommand("reorganize",      "Reorganize library folders"),
+    BotCommand("deduplicate",     "Run deduplication"),
+    BotCommand("discover",        "Discover unmatched metadata"),
+    BotCommand("sync",            "Sync metadata to Komga"),
+    BotCommand("clear",           "Clear AI chat history"),
+    BotCommand("help",            "Show all commands"),
+]
+
+
+async def _post_init(app: Application) -> None:
+    await app.bot.set_my_commands(_COMMANDS)
+    log.info("Bot commands registered (%d commands)", len(_COMMANDS))
+
+
 def main() -> None:
-    app = Application.builder().token(BOT_TOKEN).build()
+    app = Application.builder().token(BOT_TOKEN).post_init(_post_init).build()
 
     for name, handler in [
         ("start", cmd_start), ("help", cmd_start),
