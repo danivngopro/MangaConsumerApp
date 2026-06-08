@@ -21,8 +21,11 @@ API_URL: str = os.environ.get("MANGA_API_URL", "http://localhost:8816")
 API_USERNAME: str = os.environ.get("MANGA_API_USERNAME", "")
 API_PASSWORD: str = os.environ.get("MANGA_API_PASSWORD", "")
 
-# Ollama
-OLLAMA_URL: str = os.environ.get("OLLAMA_URL", "http://localhost:11434")
+# Ollama. OLLAMA_BASE_URL matches the portfolio app's env name.
+OLLAMA_URL: str = os.environ.get(
+    "OLLAMA_URL",
+    os.environ.get("OLLAMA_BASE_URL", "http://localhost:11434"),
+).rstrip("/")
 OLLAMA_MODEL: str = os.environ.get("OLLAMA_MODEL", "qwen2.5:0.5b")
 OLLAMA_TIMEOUT: int = int(os.environ.get("OLLAMA_TIMEOUT", "45"))
 
